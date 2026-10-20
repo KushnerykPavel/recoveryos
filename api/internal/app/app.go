@@ -10,10 +10,10 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	demohandler "github.com/KushnerykPavel/recoveryos/api/internal/handlers/demo"
+	recoveryhandler "github.com/KushnerykPavel/recoveryos/api/internal/handlers/recovery"
 	"github.com/KushnerykPavel/recoveryos/api/internal/repo/postgres"
 	"github.com/KushnerykPavel/recoveryos/api/internal/service/paypal"
-	demouc "github.com/KushnerykPavel/recoveryos/api/internal/usecase/demo"
+	recoveryuc "github.com/KushnerykPavel/recoveryos/api/internal/usecase/recovery"
 )
 
 func Run(ctx context.Context, config Config, logger *slog.Logger) error {
@@ -28,8 +28,8 @@ func Run(ctx context.Context, config Config, logger *slog.Logger) error {
 
 	store := postgres.New(db, config.DailyPayoutLimit)
 	provider := paypal.New(config.PayPal, nil)
-	service := demouc.NewService(store, provider, config.PollInterval, config.WaitTimeout)
-	handler := demohandler.New(service, config.CookieSecure, logger)
+	service := recoveryuc.NewService(store, provider, config.PollInterval, config.WaitTimeout)
+	handler := recoveryhandler.New(service, config.CookieSecure, logger)
 	server := &http.Server{
 		Addr:              config.Address,
 		Handler:           buildRouter(handler, store, logger),

@@ -1,4 +1,4 @@
-package demo
+package recovery
 
 import (
 	"context"
@@ -7,17 +7,17 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/KushnerykPavel/recoveryos/api/internal/domain/demo"
-	demouc "github.com/KushnerykPavel/recoveryos/api/internal/usecase/demo"
+	"github.com/KushnerykPavel/recoveryos/api/internal/domain/recovery"
+	recoveryuc "github.com/KushnerykPavel/recoveryos/api/internal/usecase/recovery"
 )
 
-const sessionCookie = "recoveryos_demo"
+const sessionCookie = "recoveryos_session"
 
 type service interface {
-	CreateSession(ctx context.Context) (demo.Snapshot, string, error)
-	Snapshot(ctx context.Context, token string) (demo.Snapshot, error)
-	Start(ctx context.Context, token string) (demo.Snapshot, error)
-	Reconcile(ctx context.Context, token string) (demo.Snapshot, error)
+	CreateSession(ctx context.Context) (recovery.Snapshot, string, error)
+	Snapshot(ctx context.Context, token string) (recovery.Snapshot, error)
+	CreatePayout(ctx context.Context, token, scenario string) (recovery.Snapshot, error)
+	Reconcile(ctx context.Context, token string) (recovery.Snapshot, error)
 }
 
 type Handler struct {
@@ -31,10 +31,10 @@ func New(service service, secureCookie bool, logger *slog.Logger) *Handler {
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("POST /api/demo/sessions", h.createSession)
-	mux.HandleFunc("GET /api/demo", h.snapshot)
-	mux.HandleFunc("POST /api/demo/start", h.start)
-	mux.HandleFunc("POST /api/demo/reconcile", h.reconcile)
+	mux.HandleFunc("POST /api/sessions", h.createSession)
+	mux.HandleFunc("GET /api/sessions/current", h.snapshot)
+	mux.HandleFunc("POST /api/payouts", h.createPayout)
+	mux.HandleFunc("POST /api/payouts/reconcile", h.reconcile)
 }
 
 func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
@@ -59,8 +59,17 @@ func (h *Handler) snapshot(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, snapshot)
 }
 
-func (h *Handler) start(w http.ResponseWriter, r *http.Request) {
-	snapshot, err := h.service.Start(r.Context(), cookieToken(r))
+func (h *Handler) createPayout(w http.ResponseWriter, r *http.Request) {
+	values := r.Header.Values("X-RecoveryOS-Scenario")
+	if len(values) > 1 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "specify one payout scenario"})
+		return
+	}
+	scenario := ""
+	if len(values) == 1 {
+		scenario = values[0]
+	}
+	snapshot, err := h.service.CreatePayout(r.Context(), cookieToken(r), scenario)
 	if err != nil {
 		h.fail(w, err)
 		return
@@ -78,16 +87,24 @@ func (h *Handler) reconcile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) fail(w http.ResponseWriter, err error) {
-	if errors.Is(err, demouc.ErrSessionNotFound) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "demo session not found"})
+	if errors.Is(err, recoveryuc.ErrSessionNotFound) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "session not found"})
 		return
 	}
-	if errors.Is(err, demouc.ErrDailyLimit) {
+	if errors.Is(err, recoveryuc.ErrDailyLimit) {
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "daily payout creation limit reached"})
 		return
 	}
-	h.logger.Error("demo request failed", "error", err)
-	writeJSON(w, http.StatusBadGateway, map[string]string{"error": "demo operation unavailable"})
+	if errors.Is(err, recoveryuc.ErrInvalidScenario) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payout scenario"})
+		return
+	}
+	if errors.Is(err, recoveryuc.ErrScenarioConflict) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "payout scenario cannot be changed"})
+		return
+	}
+	h.logger.Error("recovery request failed", "error", err)
+	writeJSON(w, http.StatusBadGateway, map[string]string{"error": "recovery operation unavailable"})
 }
 
 func cookieToken(r *http.Request) string {

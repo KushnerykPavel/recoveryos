@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	demouc "github.com/KushnerykPavel/recoveryos/api/internal/usecase/demo"
+	recoveryuc "github.com/KushnerykPavel/recoveryos/api/internal/usecase/recovery"
 )
 
 type Config struct {
@@ -71,14 +71,14 @@ func New(config Config, client *http.Client) *Client {
 	return &Client{config: config, http: client}
 }
 
-func (c *Client) CreatePayout(ctx context.Context, creationKey, senderItemID string) (demouc.Batch, error) {
+func (c *Client) CreatePayout(ctx context.Context, creationKey, senderItemID string) (recoveryuc.Batch, error) {
 	if len(senderItemID) > 63 {
-		return demouc.Batch{}, errors.New("sender item ID exceeds PayPal limit")
+		return recoveryuc.Batch{}, errors.New("sender item ID exceeds PayPal limit")
 	}
 	requestBody := payoutRequest{}
 	requestBody.SenderBatchHeader.SenderBatchID = creationKey
 	requestBody.SenderBatchHeader.RecipientType = "EMAIL"
-	requestBody.SenderBatchHeader.EmailSubject = "RecoveryOS Sandbox demo payout"
+	requestBody.SenderBatchHeader.EmailSubject = "RecoveryOS Sandbox payout"
 	requestBody.Items = make([]struct {
 		Receiver     string       `json:"receiver"`
 		SenderItemID string       `json:"sender_item_id"`
@@ -91,30 +91,30 @@ func (c *Client) CreatePayout(ctx context.Context, creationKey, senderItemID str
 
 	var response batchResponse
 	if err := c.call(ctx, http.MethodPost, "/v1/payments/payouts", requestBody, &response); err != nil {
-		return demouc.Batch{}, err
+		return recoveryuc.Batch{}, err
 	}
 	if response.BatchHeader.ID == "" {
-		return demouc.Batch{}, errors.New("PayPal create response missing payout batch ID")
+		return recoveryuc.Batch{}, errors.New("PayPal create response missing payout batch ID")
 	}
-	return demouc.Batch{ID: response.BatchHeader.ID}, nil
+	return recoveryuc.Batch{ID: response.BatchHeader.ID}, nil
 }
 
-func (c *Client) GetBatchItem(ctx context.Context, batchID string) (demouc.Item, error) {
+func (c *Client) GetBatchItem(ctx context.Context, batchID string) (recoveryuc.Item, error) {
 	var response batchResponse
 	if err := c.call(ctx, http.MethodGet, "/v1/payments/payouts/"+url.PathEscape(batchID), nil, &response); err != nil {
-		return demouc.Item{}, err
+		return recoveryuc.Item{}, err
 	}
 	if response.BatchHeader.ID != batchID {
-		return demouc.Item{}, errors.New("PayPal payout batch identity mismatch")
+		return recoveryuc.Item{}, errors.New("PayPal payout batch identity mismatch")
 	}
 	if len(response.Items) == 0 {
-		return demouc.Item{BatchID: batchID, Status: "PENDING"}, nil
+		return recoveryuc.Item{BatchID: batchID, Status: "PENDING"}, nil
 	}
 	if len(response.Items) != 1 {
-		return demouc.Item{}, fmt.Errorf("expected one payout item, got %d", len(response.Items))
+		return recoveryuc.Item{}, fmt.Errorf("expected one payout item, got %d", len(response.Items))
 	}
 	item := response.Items[0]
-	return demouc.Item{ID: item.ID, BatchID: batchID, SenderItemID: item.PayoutItem.SenderItemID, Status: item.Status}, nil
+	return recoveryuc.Item{ID: item.ID, BatchID: batchID, SenderItemID: item.PayoutItem.SenderItemID, Status: item.Status}, nil
 }
 
 func (c *Client) call(ctx context.Context, method, path string, body any, dst any) error {

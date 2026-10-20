@@ -10,8 +10,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/KushnerykPavel/recoveryos/api/internal/domain/demo"
-	demouc "github.com/KushnerykPavel/recoveryos/api/internal/usecase/demo"
+	"github.com/KushnerykPavel/recoveryos/api/internal/domain/recovery"
+	recoveryuc "github.com/KushnerykPavel/recoveryos/api/internal/usecase/recovery"
 )
 
 type Store struct {
@@ -23,42 +23,42 @@ func New(db *pgxpool.Pool, dailyLimit int) *Store { return &Store{db: db, dailyL
 
 func (s *Store) Ping(ctx context.Context) error { return s.db.Ping(ctx) }
 
-func (s *Store) CreateSession(ctx context.Context, tokenHash []byte, expiresAt time.Time) (demo.Session, error) {
-	var session demo.Session
+func (s *Store) CreateSession(ctx context.Context, tokenHash []byte, expiresAt time.Time) (recovery.Session, error) {
+	var session recovery.Session
 	err := s.db.QueryRow(ctx, `
-		INSERT INTO demo_sessions (token_hash, expires_at) VALUES ($1, $2)
+		INSERT INTO sessions (token_hash, expires_at) VALUES ($1, $2)
 		RETURNING id::text, created_at, expires_at`, tokenHash, expiresAt,
 	).Scan(&session.ID, &session.CreatedAt, &session.ExpiresAt)
 	return session, err
 }
 
-func (s *Store) Snapshot(ctx context.Context, tokenHash []byte) (demo.Snapshot, error) {
-	var snapshot demo.Snapshot
-	snapshot.Events = []demo.Event{}
+func (s *Store) Snapshot(ctx context.Context, tokenHash []byte) (recovery.Snapshot, error) {
+	var snapshot recovery.Snapshot
+	snapshot.Events = []recovery.Event{}
 	err := s.db.QueryRow(ctx, `
-		SELECT id::text, created_at, expires_at FROM demo_sessions
+		SELECT id::text, created_at, expires_at FROM sessions
 		WHERE token_hash = $1 AND expires_at > now()`, tokenHash,
 	).Scan(&snapshot.Session.ID, &snapshot.Session.CreatedAt, &snapshot.Session.ExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return demo.Snapshot{}, demouc.ErrSessionNotFound
+		return recovery.Snapshot{}, recoveryuc.ErrSessionNotFound
 	}
 	if err != nil {
-		return demo.Snapshot{}, err
+		return recovery.Snapshot{}, err
 	}
 
 	payout, err := s.getPayout(ctx, snapshot.Session.ID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return demo.Snapshot{}, err
+		return recovery.Snapshot{}, err
 	}
 	if err == nil {
 		snapshot.Payout = &payout
-		var incident demo.Incident
+		var incident recovery.Incident
 		err = s.db.QueryRow(ctx, `
 			SELECT id::text, payout_id::text, status, created_at
 			FROM incidents WHERE payout_id = $1`, payout.ID,
 		).Scan(&incident.ID, &incident.PayoutID, &incident.Status, &incident.CreatedAt)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return demo.Snapshot{}, err
+			return recovery.Snapshot{}, err
 		}
 		if err == nil {
 			snapshot.Incident = &incident
@@ -69,43 +69,43 @@ func (s *Store) Snapshot(ctx context.Context, tokenHash []byte) (demo.Snapshot, 
 		SELECT id, source, kind, details, occurred_at FROM payout_events
 		WHERE session_id = $1 ORDER BY id`, snapshot.Session.ID)
 	if err != nil {
-		return demo.Snapshot{}, err
+		return recovery.Snapshot{}, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var event demo.Event
+		var event recovery.Event
 		if err := rows.Scan(&event.ID, &event.Source, &event.Kind, &event.Details, &event.OccurredAt); err != nil {
-			return demo.Snapshot{}, err
+			return recovery.Snapshot{}, err
 		}
 		snapshot.Events = append(snapshot.Events, event)
 	}
 	return snapshot, rows.Err()
 }
 
-func (s *Store) ReservePayout(ctx context.Context, sessionID string) (demo.Payout, bool, error) {
+func (s *Store) ReservePayout(ctx context.Context, sessionID, scenario string) (recovery.Payout, bool, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
-		return demo.Payout{}, false, err
+		return recovery.Payout{}, false, err
 	}
 	defer tx.Rollback(ctx)
-	var payout demo.Payout
+	var payout recovery.Payout
 	var created bool
 	err = tx.QueryRow(ctx, `
-		INSERT INTO payout_records (session_id, creation_key, sender_item_id)
-		VALUES ($1, 'recoveryos-' || $1::text, 'item-' || $1::text)
+		INSERT INTO payout_records (session_id, creation_key, sender_item_id, scenario)
+		VALUES ($1, 'recoveryos-' || $1::text, 'item-' || $1::text, $2)
 		ON CONFLICT (session_id) DO NOTHING
-		RETURNING id::text, session_id::text, creation_key, sender_item_id, status, created_at`, sessionID,
-	).Scan(&payout.ID, &payout.SessionID, &payout.CreationKey, &payout.SenderItemID, &payout.Status, &payout.CreatedAt)
+		RETURNING id::text, session_id::text, creation_key, sender_item_id, status, scenario, created_at`, sessionID, scenario,
+	).Scan(&payout.ID, &payout.SessionID, &payout.CreationKey, &payout.SenderItemID, &payout.Status, &payout.Scenario, &payout.CreatedAt)
 	if err == nil {
 		created = true
 	} else if errors.Is(err, pgx.ErrNoRows) {
 		if err := tx.Rollback(ctx); err != nil {
-			return demo.Payout{}, false, err
+			return recovery.Payout{}, false, err
 		}
 		payout, err = s.getPayout(ctx, sessionID)
 		return payout, false, err
 	} else {
-		return demo.Payout{}, false, err
+		return recovery.Payout{}, false, err
 	}
 	var count int
 	err = tx.QueryRow(ctx, `
@@ -115,26 +115,26 @@ func (s *Store) ReservePayout(ctx context.Context, sessionID string) (demo.Payou
 		WHERE daily_payout_counts.count < $1
 		RETURNING count`, s.dailyLimit).Scan(&count)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return demo.Payout{}, false, demouc.ErrDailyLimit
+		return recovery.Payout{}, false, recoveryuc.ErrDailyLimit
 	}
 	if err != nil {
-		return demo.Payout{}, false, err
+		return recovery.Payout{}, false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return demo.Payout{}, false, err
+		return recovery.Payout{}, false, err
 	}
 	return payout, created, nil
 }
 
-func (s *Store) getPayout(ctx context.Context, sessionID string) (demo.Payout, error) {
-	var payout demo.Payout
+func (s *Store) getPayout(ctx context.Context, sessionID string) (recovery.Payout, error) {
+	var payout recovery.Payout
 	var batchID, itemID, providerStatus pgtype.Text
 	err := s.db.QueryRow(ctx, `
 		SELECT id::text, session_id::text, creation_key, sender_item_id,
-		       batch_id, item_id, provider_status, status, created_at
+		       batch_id, item_id, provider_status, status, scenario, created_at
 		FROM payout_records WHERE session_id = $1`, sessionID,
 	).Scan(&payout.ID, &payout.SessionID, &payout.CreationKey, &payout.SenderItemID,
-		&batchID, &itemID, &providerStatus, &payout.Status, &payout.CreatedAt)
+		&batchID, &itemID, &providerStatus, &payout.Status, &payout.Scenario, &payout.CreatedAt)
 	if batchID.Valid {
 		payout.BatchID = batchID.String
 	}
@@ -223,45 +223,61 @@ func (s *Store) ObserveSuccess(ctx context.Context, payoutID, itemID string) err
 		return err
 	}
 	defer tx.Rollback(ctx)
-	var sessionID, status string
+	var sessionID, status, scenario string
 	var existingItemID pgtype.Text
 	err = tx.QueryRow(ctx, `
-		SELECT session_id::text, status, item_id FROM payout_records WHERE id = $1 FOR UPDATE`, payoutID,
-	).Scan(&sessionID, &status, &existingItemID)
+		SELECT session_id::text, status, scenario, item_id FROM payout_records WHERE id = $1 FOR UPDATE`, payoutID,
+	).Scan(&sessionID, &status, &scenario, &existingItemID)
 	if err != nil {
 		return err
 	}
 	if existingItemID.Valid && existingItemID.String != itemID {
 		return errors.New("PayPal payout item identity changed")
 	}
-	if status == "stale" {
+	if status == "stale" || status == "completed" {
 		return nil
 	}
 	if status != "pending" {
 		return fmt.Errorf("cannot observe success from payout status %q", status)
 	}
+	nextStatus := "completed"
+	if scenario == recovery.ScenarioMissedUpdate {
+		nextStatus = "stale"
+	}
 	_, err = tx.Exec(ctx, `
-		UPDATE payout_records SET item_id = $2, provider_status = 'SUCCESS', status = 'stale'
-		WHERE id = $1`, payoutID, itemID)
+		UPDATE payout_records SET item_id = $2, provider_status = 'SUCCESS', status = $3
+		WHERE id = $1`, payoutID, itemID, nextStatus)
 	if err != nil {
 		return err
 	}
-	for _, event := range []struct{ source, kind, details string }{
-		{"paypal", "item_observed", itemID + ":SUCCESS"},
-		{"injected", "internal_update_skipped", "successful provider item deliberately left stale"},
-	} {
+	_, err = tx.Exec(ctx, `
+		INSERT INTO payout_events (session_id, payout_id, source, kind, details)
+		VALUES ($1, $2, 'paypal', 'item_observed', $3)`, sessionID, payoutID, itemID+":SUCCESS")
+	if err != nil {
+		return err
+	}
+	if scenario == recovery.ScenarioMissedUpdate {
 		_, err = tx.Exec(ctx, `
 			INSERT INTO payout_events (session_id, payout_id, source, kind, details)
-			VALUES ($1, $2, $3, $4, $5)`, sessionID, payoutID, event.source, event.kind, event.details)
+			VALUES ($1, $2, 'injected', 'internal_update_skipped', $3)`, sessionID, payoutID,
+			"successful provider item deliberately left stale")
 		if err != nil {
 			return err
 		}
-	}
-	_, err = tx.Exec(ctx, `
-		INSERT INTO incidents (session_id, payout_id, status)
-		VALUES ($1, $2, 'open') ON CONFLICT (payout_id) DO NOTHING`, sessionID, payoutID)
-	if err != nil {
-		return err
+		_, err = tx.Exec(ctx, `
+			INSERT INTO incidents (session_id, payout_id, status)
+			VALUES ($1, $2, 'open') ON CONFLICT (payout_id) DO NOTHING`, sessionID, payoutID)
+		if err != nil {
+			return err
+		}
+	} else {
+		_, err = tx.Exec(ctx, `
+			INSERT INTO payout_events (session_id, payout_id, source, kind, details)
+			VALUES ($1, $2, 'system', 'internal_record_updated', $3)`, sessionID, payoutID,
+			"payout record updated after provider success")
+		if err != nil {
+			return err
+		}
 	}
 	return tx.Commit(ctx)
 }

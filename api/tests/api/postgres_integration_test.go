@@ -16,17 +16,17 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
-	demohandler "github.com/KushnerykPavel/recoveryos/api/internal/handlers/demo"
+	recoveryhandler "github.com/KushnerykPavel/recoveryos/api/internal/handlers/recovery"
 	"github.com/KushnerykPavel/recoveryos/api/internal/repo/postgres"
 	"github.com/KushnerykPavel/recoveryos/api/internal/service/paypal"
-	demouc "github.com/KushnerykPavel/recoveryos/api/internal/usecase/demo"
+	recoveryuc "github.com/KushnerykPavel/recoveryos/api/internal/usecase/recovery"
 )
 
 type scriptedTransport func(*http.Request) (*http.Response, error)
 
 func (f scriptedTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-func TestPostgresDemoWorkflow(t *testing.T) {
+func TestPostgresRecoveryWorkflow(t *testing.T) {
 	databaseURL := os.Getenv("TEST_DB_URL")
 	if databaseURL == "" {
 		t.Skip("set TEST_DB_URL to a disposable PostgreSQL database ending in _test")
@@ -55,7 +55,7 @@ func TestPostgresDemoWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if _, err := db.Exec(t.Context(), `TRUNCATE incidents, payout_events, payout_records, daily_payout_counts, demo_sessions RESTART IDENTITY CASCADE`); err != nil {
+	if _, err := db.Exec(t.Context(), `TRUNCATE incidents, payout_events, payout_records, daily_payout_counts, sessions RESTART IDENTITY CASCADE`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -92,18 +92,18 @@ func TestPostgresDemoWorkflow(t *testing.T) {
 	})
 	provider := paypal.New(paypal.Config{BaseURL: "https://paypal.test", ClientID: "client", ClientSecret: "secret",
 		Receiver: "receiver@example.com", Amount: "0.01", Currency: "USD"}, &http.Client{Transport: transport})
-	service := demouc.NewService(postgres.New(db, 1), provider, 0, 0)
-	handler := demohandler.New(service, false, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	service := recoveryuc.NewService(postgres.New(db, 1), provider, 0, 0)
+	handler := recoveryhandler.New(service, false, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	mux := http.NewServeMux()
 	handler.Register(mux)
-	_, _, cookie := request(t, mux, http.MethodPost, "/api/demo/sessions", nil)
-	_, snapshot, _ := request(t, mux, http.MethodPost, "/api/demo/start", cookie)
+	_, _, cookie := request(t, mux, http.MethodPost, "/api/sessions", nil)
+	_, snapshot, _ := requestWithScenario(t, mux, http.MethodPost, "/api/payouts", cookie, "missed-update")
 	if snapshot.Payout == nil || snapshot.Payout.Status != "stale" || snapshot.Incident == nil {
 		t.Fatalf("missing incident after provider SUCCESS: %+v", snapshot)
 	}
-	_, _, _ = request(t, mux, http.MethodPost, "/api/demo/start", cookie)
-	_, _, otherCookie := request(t, mux, http.MethodPost, "/api/demo/sessions", nil)
-	status, _, _ := request(t, mux, http.MethodPost, "/api/demo/start", otherCookie)
+	_, _, _ = request(t, mux, http.MethodPost, "/api/payouts", cookie)
+	_, _, otherCookie := request(t, mux, http.MethodPost, "/api/sessions", nil)
+	status, _, _ := request(t, mux, http.MethodPost, "/api/payouts", otherCookie)
 	if status != http.StatusTooManyRequests {
 		t.Fatalf("daily payout limit returned %d", status)
 	}

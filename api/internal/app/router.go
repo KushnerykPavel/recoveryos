@@ -7,12 +7,12 @@ import (
 	"net/http"
 	"time"
 
-	demohandler "github.com/KushnerykPavel/recoveryos/api/internal/handlers/demo"
+	recoveryhandler "github.com/KushnerykPavel/recoveryos/api/internal/handlers/recovery"
 )
 
 type pinger interface{ Ping(context.Context) error }
 
-func buildRouter(demo *demohandler.Handler, db pinger, logger *slog.Logger) http.Handler {
+func buildRouter(recovery *recoveryhandler.Handler, db pinger, logger *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
@@ -29,6 +29,6 @@ func buildRouter(demo *demohandler.Handler, db pinger, logger *slog.Logger) http
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-	demo.Register(mux)
+	recovery.Register(mux)
 	return mux
 }

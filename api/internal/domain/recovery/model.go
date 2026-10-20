@@ -1,6 +1,11 @@
-package demo
+package recovery
 
 import "time"
+
+const (
+	ScenarioStandard     = "standard"
+	ScenarioMissedUpdate = "missed-update"
+)
 
 // Session is the anonymous visitor's isolated workspace.
 type Session struct {
@@ -19,6 +24,7 @@ type Payout struct {
 	ItemID         string    `json:"item_id,omitempty"`
 	ProviderStatus string    `json:"provider_status,omitempty"`
 	Status         string    `json:"status"`
+	Scenario       string    `json:"scenario"`
 	CreatedAt      time.Time `json:"created_at"`
 }
 

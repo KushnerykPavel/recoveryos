@@ -1,10 +1,11 @@
 # RecoveryOS API — first vertical slice
 
-This Go API creates an anonymous demo session, sends at most one new PayPal
-Sandbox payout for that session, reads the specific payout item's status, and
-opens an incident when the item reaches `SUCCESS` while the internal payout
-record is deliberately left stale. The skipped update is stored as an event
-with source `injected`; PayPal observations use source `paypal`.
+This Go API creates an anonymous session, sends at most one new PayPal Sandbox
+payout for that session, and reads the specific payout item's status. Normally,
+item-level `SUCCESS` completes the internal payout record. An optional fault
+scenario deliberately leaves that record stale and opens an incident. The
+skipped update is stored as an event with source `injected`; PayPal observations
+use source `paypal`.
 
 ## Run locally
 
@@ -31,14 +32,30 @@ base URL from the environment.
 ## HTTP flow
 
 ```sh
-curl -i -c cookies.txt -X POST http://127.0.0.1:8080/api/demo/sessions
-curl -i -b cookies.txt -X POST http://127.0.0.1:8080/api/demo/start
-curl -i -b cookies.txt http://127.0.0.1:8080/api/demo
-curl -i -b cookies.txt -X POST http://127.0.0.1:8080/api/demo/reconcile
+curl -i -c cookies.txt -X POST http://127.0.0.1:8080/api/sessions
+curl -i -b cookies.txt -X POST http://127.0.0.1:8080/api/payouts
+curl -i -b cookies.txt http://127.0.0.1:8080/api/sessions/current
+curl -i -b cookies.txt -X POST http://127.0.0.1:8080/api/payouts/reconcile
 ```
 
-`POST /api/demo/start` checks the payout item for up to 25 seconds. If the item
-is still `PENDING`, later `POST /api/demo/reconcile` requests can check it
+To run the missed-update scenario, send a header on the **first** payout
+request in a fresh session:
+
+```sh
+curl -i -b cookies.txt -H 'X-RecoveryOS-Scenario: missed-update' \
+  -X POST http://127.0.0.1:8080/api/payouts
+```
+
+Without this header the payout record is updated normally after PayPal item
+`SUCCESS`. The selected scenario is stored on the payout and returned as
+`payout.scenario`. Reconciliation and repeat requests use that stored value;
+they cannot switch an existing payout to a different scenario. An explicit
+conflicting scenario returns HTTP 409. Unsupported header values return 400.
+The scenario changes only the internal record update: the Sandbox payout and
+provider read are genuine in both cases.
+
+`POST /api/payouts` checks the payout item for up to 25 seconds. If the item
+is still `PENDING`, later `POST /api/payouts/reconcile` requests can check it
 again. The session cookie is the only way to access that visitor's record.
 
 The API reserves a stable `sender_batch_id` before making the provider call.
@@ -47,8 +64,8 @@ If creation times out or its result is ambiguous, the record becomes
 configurable `DAILY_PAYOUT_LIMIT` also caps fresh payouts across sessions.
 
 This slice does not yet include the pre-created payout fallback, AI
-investigation, operator approval, or record correction. Those belong to the
-next roadmap stages.
+investigation, operator approval, or incident record correction. Those belong
+to the next roadmap stages.
 
 ## Verification
 
@@ -61,10 +78,10 @@ GOCACHE="$PWD/.cache/go-build" go vet ./...
 The default tests exercise the HTTP workflow with an in-memory store and a
 scripted provider, plus the PayPal adapter with an in-process HTTP transport.
 A real PayPal Sandbox smoke test requires Sandbox credentials and is a separate
-manual step; do not point the public demo at a production account.
+manual step; this API is restricted to Sandbox.
 
 To exercise the SQL migration and PostgreSQL workflow, set `TEST_DB_URL` to a
 disposable database whose name ends in `_test`, then run
-`go test ./tests/api -run TestPostgresDemoWorkflow -v`. This test clears its
+`go test ./tests/api -run TestPostgresRecoveryWorkflow -v`. This test clears its
 tables before running. It does not call PayPal; the live Sandbox smoke test is
 a separate manual step with your credentials.
