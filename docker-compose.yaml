@@ -1,0 +1,19 @@
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: recoveryos
+      POSTGRES_USER: recoveryos
+      POSTGRES_PASSWORD: recoveryos
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U recoveryos -d recoveryos"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+    volumes:
+      - recoveryos_pgdata:/var/lib/postgresql/data
+
+volumes:
+  recoveryos_pgdata:

@@ -1,0 +1,36 @@
+version: '3'
+
+vars:
+  ROOT_DIR: '{{.TASKFILE_DIR}}'
+
+env:
+  GOCACHE: '{{.ROOT_DIR}}/api/.cache/go-build'
+
+tasks:
+  db:up:
+    desc: Start local PostgreSQL
+    cmds:
+      - docker compose up -d --wait db
+
+  db:down:
+    desc: Stop local PostgreSQL
+    cmds:
+      - docker compose down
+
+  api:migrate:
+    desc: Apply API database migrations
+    dir: api
+    cmds:
+      - go run ./cmd/migrate up
+
+  api:run:
+    desc: Run the API locally
+    dir: api
+    cmds:
+      - go run ./cmd/api
+
+  api:test:
+    desc: Test the API
+    dir: api
+    cmds:
+      - go test ./...
