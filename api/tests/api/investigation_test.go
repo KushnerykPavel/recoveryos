@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -18,6 +19,10 @@ import (
 
 func investigationServer(t *testing.T, proposedAction, itemStatus string) (http.Handler, *fakeProvider, *int) {
 	t.Helper()
+	fixture, err := os.ReadFile("../../../client/test/fixtures/investigation.json")
+	if err != nil {
+		t.Fatal(err)
+	}
 	provider := &fakeProvider{statuses: []string{"SUCCESS", itemStatus}}
 	store := newMemoryStore()
 	service := recoveryuc.NewService(store, provider, 0, 0)
@@ -86,16 +91,16 @@ func investigationServer(t *testing.T, proposedAction, itemStatus string) (http.
 				itemID = evidence.Reference
 			}
 		}
-		result := map[string]any{"incident_id": incidentID, "item_id": itemID, "item_status": itemStatus,
-			"diagnosis":       "PayPal confirms the item while the internal payout record remains pending after an injected missed update.",
-			"proposed_action": proposedAction,
-			"evidence": []map[string]string{
-				{"source": "provider", "reference": itemID, "finding": "PayPal item status is " + itemStatus},
-				{"source": "internal", "reference": payoutID, "finding": "Payout record is pending"},
-				{"source": "injected", "reference": "0", "finding": "Internal update was deliberately skipped"},
-				{"source": "policy", "reference": "record-correction-policy", "finding": "Requires fresh SUCCESS at approval"},
-			},
+		var result map[string]any
+		if err := json.Unmarshal(fixture, &result); err != nil {
+			t.Fatal(err)
 		}
+		if result["incident_id"] != incidentID || result["item_id"] != itemID || result["evidence"].([]any)[1].(map[string]any)["reference"] != payoutID {
+			t.Error("scripted diagnosis does not match read-only evidence")
+		}
+		result["item_status"] = itemStatus
+		result["proposed_action"] = proposedAction
+		delete(result, "origin")
 		encoded, _ := json.Marshal(result)
 		message, _ := json.Marshal(map[string]any{"status": "completed", "output": []any{map[string]any{"type": "message", "content": []any{map[string]any{"type": "output_text", "text": string(encoded)}}}}})
 		_, _ = w.Write(message)

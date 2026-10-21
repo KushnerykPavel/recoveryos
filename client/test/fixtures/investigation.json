@@ -1,0 +1,14 @@
+{
+  "incident_id": "incident-a",
+  "item_id": "provider-item-1",
+  "item_status": "SUCCESS",
+  "diagnosis": "PayPal confirms SUCCESS while the payout record remains pending after an injected missed update.",
+  "proposed_action": "correct_payout_record",
+  "origin": "ai",
+  "evidence": [
+    { "source": "provider", "reference": "provider-item-1", "finding": "PayPal item succeeded" },
+    { "source": "internal", "reference": "payout-a", "finding": "Payout record pending" },
+    { "source": "injected", "reference": "0", "finding": "Internal update skipped" },
+    { "source": "policy", "reference": "record-correction-policy", "finding": "Fresh verification required" }
+  ]
+}
