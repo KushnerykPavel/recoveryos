@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready
+**Status:** done.
 
 - [x] A clean browser can start a session without credentials and reach Incident Lab.
 - [x] Two browser sessions receive different identities and cannot read each other's session state.
