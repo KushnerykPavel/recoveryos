@@ -3,7 +3,7 @@
 This Go API creates an anonymous session, sends at most one new PayPal Sandbox
 payout for that session, and reads the specific payout item's status. Normally,
 item-level `SUCCESS` completes the internal payout record. An optional fault
-scenario deliberately leaves that record stale and opens an incident. The
+scenario deliberately leaves the record `pending` and opens an incident. The
 skipped update is stored as an event with source `injected`; PayPal observations
 use source `paypal`.
 

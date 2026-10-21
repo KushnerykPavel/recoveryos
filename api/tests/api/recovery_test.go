@@ -117,12 +117,12 @@ func (s *memoryStore) ObserveSuccess(_ context.Context, payoutID, itemID string)
 		if payout.ID != payoutID {
 			continue
 		}
-		if payout.Status == "stale" || payout.Status == "completed" {
+		if payout.Status == "stale" || payout.Status == "completed" || payout.ProviderStatus == "SUCCESS" {
 			return nil
 		}
 		payout.ItemID, payout.ProviderStatus, payout.Status = itemID, "SUCCESS", "completed"
 		if payout.Scenario == recovery.ScenarioMissedUpdate {
-			payout.Status = "stale"
+			payout.Status = "pending"
 		}
 		s.payouts[key] = payout
 		s.events[key] = append(s.events[key], recovery.Event{Source: "paypal", Kind: "item_observed"})
@@ -237,9 +237,10 @@ func TestRecoveryWorkflowKeepsSessionsIsolatedAndCreatesOnePayout(t *testing.T) 
 		t.Fatal("sessions were not isolated")
 	}
 	status, started, _ := requestWithScenario(t, server, http.MethodPost, "/api/payouts", firstCookie, recovery.ScenarioMissedUpdate)
-	if status != http.StatusOK || started.Payout == nil || started.Payout.Status != "stale" ||
+	if status != http.StatusOK || started.Payout == nil || started.Payout.Status != "pending" ||
 		started.Payout.ProviderStatus != "SUCCESS" || started.Incident == nil || len(started.Events) != 2 ||
-		started.Events[1].Source != "injected" {
+		started.Events[0].Source != "paypal" || started.Events[0].Kind != "item_observed" ||
+		started.Events[1].Source != "injected" || started.Events[1].Kind != "internal_update_skipped" {
 		t.Fatalf("unexpected completed scenario: status=%d snapshot=%+v", status, started)
 	}
 	_, again, _ := request(t, server, http.MethodPost, "/api/payouts", firstCookie)
@@ -265,6 +266,18 @@ func TestSuccessfulPayoutUpdatesRecordWithoutInjectedIncident(t *testing.T) {
 	_, again, _ := request(t, server, http.MethodPost, "/api/payouts", cookie)
 	if again.Payout == nil || again.Payout.Status != "completed" || len(again.Events) != 2 || provider.createCalls != 1 {
 		t.Fatalf("repeated payout request changed a completed payout: %+v", again)
+	}
+}
+
+func TestInjectedIncidentKeepsVerifiedSuccessOnRepeatedStart(t *testing.T) {
+	provider := &fakeProvider{statuses: []string{"SUCCESS", "FAILED"}}
+	server := newServer(provider)
+	_, _, cookie := request(t, server, http.MethodPost, "/api/sessions", nil)
+	_, first, _ := requestWithScenario(t, server, http.MethodPost, "/api/payouts", cookie, recovery.ScenarioMissedUpdate)
+	_, again, _ := request(t, server, http.MethodPost, "/api/payouts", cookie)
+	if first.Payout == nil || again.Payout == nil || again.Payout.ProviderStatus != "SUCCESS" ||
+		again.Payout.Status != "pending" || again.Incident == nil || len(again.Events) != len(first.Events) {
+		t.Fatalf("repeated start changed verified incident evidence: %+v", again)
 	}
 }
 

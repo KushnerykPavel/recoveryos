@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 type Session = { id: string; created_at: string; expires_at: string }
 type Payout = { id: string; creation_key: string; batch_id?: string; item_id?: string; status: string; provider_status?: string }
 type Incident = { id: string; status: string }
-type Event = { id: number; source: string; kind: string }
+type Event = { id: number; source: string; kind: string; details: string; occurred_at: string }
 type Snapshot = { session: Session; payout?: Payout; incident?: Incident; events: Event[] }
 type View = 'overview' | 'lab'
 
@@ -40,7 +40,7 @@ export function App() {
 
   const payout = snapshot?.payout
   const awaitingBatch = payout?.status === 'creating'
-  const awaitingItem = payout?.status === 'pending' && !!payout.batch_id && (!payout.provider_status || payout.provider_status === 'PENDING')
+  const awaitingItem = payout?.status === 'pending' && !!payout.batch_id && !snapshot?.incident && (!payout.provider_status || payout.provider_status === 'PENDING')
 
   useEffect(() => {
     if (creatingPayout || pollingPaused || (!awaitingBatch && !awaitingItem)) return
@@ -156,7 +156,7 @@ export function App() {
         {loading ? <p className="loading" role="status">Loading your workspace…</p> : !snapshot ?
           <section className="welcome"><div className="eyebrow">WELCOME TO RECOVERYOS</div><h1>See recovery in action.</h1><p>Start a private demo workspace to explore how an incident moves from detection to a safe resolution.</p><div className="welcome-card"><span className="welcome-icon">◇</span><div><strong>Your own Incident Lab</strong><small>No account or credentials needed. Your session and activity are separate from other visitors.</small></div></div><button className="primary" onClick={startSession} disabled={starting}>{starting ? 'Starting…' : 'Start demo session'} ↗</button>{error && <p className="error" role="alert">{error}</p>}</section>
           : view === 'overview' ? <section className="page"><div className="eyebrow">YOUR WORKSPACE</div><h1>Overview</h1><p className="intro">A quick view of your private demo session.</p><div className="metrics"><Metric label="Demo session" value="Active" detail={`Expires ${new Date(snapshot.session.expires_at).toLocaleString()}`} /><Metric label="Payout record" value={snapshot.payout?.status ?? 'Not started'} detail="Your session only" /><Metric label="Open incident" value={snapshot.incident?.status === 'open' ? '1' : '0'} detail="In this workspace" /></div><div className="feature-card"><div><div className="eyebrow">NEXT STEP</div><h2>Explore the Incident Lab</h2><p>Follow the demo journey and inspect the state attached to this session.</p></div><button className="primary" onClick={() => setView('lab')}>Open Incident Lab ↗</button></div></section>
-          : <section className="page"><div className="eyebrow">DEMO WORKSPACE / INCIDENT LAB</div><h1>Incident Lab</h1><p className="intro">Your isolated space for a payout recovery walkthrough.</p><div className="lab-layout"><div className="lab-main"><div className="panel"><div className="panel-header"><div><span className="eyebrow">CURRENT SESSION</span><h2>Ready to investigate</h2></div><span className="status">Active</span></div><p>This workspace is linked to session <code>{snapshot.session.id}</code>. Its payout and incident data belong only to this browser session.</p><div className="session-meta"><div><small>Started</small><strong>{new Date(snapshot.session.created_at).toLocaleString()}</strong></div><div><small>Expires</small><strong>{new Date(snapshot.session.expires_at).toLocaleString()}</strong></div></div></div><PayoutPanel payout={payout} incident={snapshot.incident} creating={creatingPayout} checking={checkingPayout} pollingPaused={pollingPaused} stateUnverified={payoutStateUnverified} dailyLimitReached={dailyLimitReached} error={error} onCreate={startPayout} onVerify={verifyPayoutState} onCheck={checkPayout} /><div className="panel"><span className="eyebrow">JOURNEY</span><h2>Recovery workflow</h2><Step number="01" title="Start a private session" detail="Your workspace is ready." done /><Step number="02" title="Observe a Sandbox payout" detail={payout ? `PayPal item: ${payout.provider_status ?? 'awaiting status'}` : 'Create a payout to observe its PayPal item.'} done={!!payout?.item_id && payout.provider_status === 'SUCCESS'} /><Step number="03" title="Detect a discrepancy" detail={snapshot.incident ? `Injected fault opened incident ${snapshot.incident.id.slice(0, 8)}.` : 'Reconciliation and evidence appear here when an incident is detected.'} done={!!snapshot.incident} /><Step number="04" title="Review and resolve" detail="Investigation and approval will be added in a later stage." done={snapshot.incident?.status === 'resolved'} /></div></div><aside className="lab-aside"><div className="panel"><span className="eyebrow">SESSION STATE</span><h2>At a glance</h2><State label="Payout record" value={payout?.status ?? 'None yet'} /><State label="Provider item" value={snapshot.payout?.provider_status ?? '—'} /><State label="Incident" value={snapshot.incident?.status ?? 'None'} /><State label="Events" value={String(snapshot.events.length)} /></div><div className="aside-note">ⓘ &nbsp;PayPal credentials stay on the server. This browser receives only its own session state.</div></aside></div></section>}
+          : <section className="page"><div className="eyebrow">DEMO WORKSPACE / INCIDENT LAB</div><h1>Incident Lab</h1><p className="intro">Your isolated space for a payout recovery walkthrough.</p><div className="lab-layout"><div className="lab-main"><div className="panel"><div className="panel-header"><div><span className="eyebrow">CURRENT SESSION</span><h2>Ready to investigate</h2></div><span className="status">Active</span></div><p>This workspace is linked to session <code>{snapshot.session.id}</code>. Its payout and incident data belong only to this browser session.</p><div className="session-meta"><div><small>Started</small><strong>{new Date(snapshot.session.created_at).toLocaleString()}</strong></div><div><small>Expires</small><strong>{new Date(snapshot.session.expires_at).toLocaleString()}</strong></div></div></div><PayoutPanel payout={payout} creating={creatingPayout} checking={checkingPayout} pollingPaused={pollingPaused} stateUnverified={payoutStateUnverified} dailyLimitReached={dailyLimitReached} error={error} onCreate={startPayout} onVerify={verifyPayoutState} onCheck={checkPayout} />{snapshot.incident && payout && <IncidentEvidence payout={payout} incident={snapshot.incident} events={snapshot.events} />}<div className="panel"><span className="eyebrow">JOURNEY</span><h2>Recovery workflow</h2><Step number="01" title="Start a private session" detail="Your workspace is ready." done /><Step number="02" title="Observe a Sandbox payout" detail={payout ? `PayPal item: ${payout.provider_status ?? 'awaiting status'}` : 'Create a payout to observe its PayPal item.'} done={!!payout?.item_id && payout.provider_status === 'SUCCESS'} /><Step number="03" title="Detect a discrepancy" detail={snapshot.incident ? `Injected fault opened incident ${snapshot.incident.id.slice(0, 8)}.` : 'Reconciliation and evidence appear here when an incident is detected.'} done={!!snapshot.incident} /><Step number="04" title="Review and resolve" detail="Investigation and approval will be added in a later stage." done={snapshot.incident?.status === 'resolved'} /></div></div><aside className="lab-aside"><div className="panel"><span className="eyebrow">SESSION STATE</span><h2>At a glance</h2><State label="Payout record" value={payout?.status ?? 'None yet'} /><State label="Provider item" value={snapshot.payout?.provider_status ?? '—'} /><State label="Incident" value={snapshot.incident?.status ?? 'None'} /><State label="Events" value={String(snapshot.events.length)} /></div><div className="aside-note">ⓘ &nbsp;PayPal credentials stay on the server. This browser receives only its own session state.</div></aside></div></section>}
       </main>
     </div>
   </div>
@@ -172,9 +172,22 @@ function State({ label, value }: { label: string; value: string }) {
   return <div className="state-row"><span>{label}</span><strong>{value}</strong></div>
 }
 
-function PayoutPanel({ payout, incident, creating, checking, pollingPaused, stateUnverified, dailyLimitReached, error, onCreate, onVerify, onCheck }: {
+function IncidentEvidence({ payout, incident, events }: { payout: Payout; incident: Incident; events: Event[] }) {
+  return <div className="panel incident-evidence">
+    <span className="eyebrow">{incident.status.toUpperCase()} INCIDENT · {incident.id.slice(0, 8)}</span>
+    <h2>PayPal payout completed, internal record pending</h2>
+    <p>Reconciliation confirmed the PayPal item succeeded while the payout record still says pending.</p>
+    <div className="evidence-columns">
+      <div><strong>PayPal item evidence</strong><State label="Item ID" value={payout.item_id ?? '—'} /><State label="Item status" value={payout.provider_status ?? '—'} /></div>
+      <div><strong>Internal payout record</strong><State label="Record status" value={payout.status} /><p className="injected-note">Injected fault: RecoveryOS deliberately skipped the record update.</p></div>
+    </div>
+    <h3>Event history</h3>
+    <ol className="event-history">{events.map(event => <li key={event.id}><span className={`event-source ${event.source}`}>{event.source === 'paypal' ? 'PayPal' : event.source === 'injected' ? 'Injected fault' : 'System'}</span><strong>{event.kind.replaceAll('_', ' ')}</strong><span>{event.details}</span><time dateTime={event.occurred_at}>{new Date(event.occurred_at).toLocaleString()}</time></li>)}</ol>
+  </div>
+}
+
+function PayoutPanel({ payout, creating, checking, pollingPaused, stateUnverified, dailyLimitReached, error, onCreate, onVerify, onCheck }: {
   payout?: Payout
-  incident?: Incident
   creating: boolean
   checking: boolean
   pollingPaused: boolean
@@ -211,7 +224,6 @@ function PayoutPanel({ payout, incident, creating, checking, pollingPaused, stat
       </div>
       {checking && <p role="status">Checking the payout item…</p>}
       {pollingPaused && <button className="secondary" onClick={onCheck} disabled={checking}>Check payout item again</button>}
-      {incident && <p className="injected-note">Injected fault: RecoveryOS deliberately skipped the internal record update after PayPal reported item SUCCESS.</p>}
     </>}
     {error && <p className="error" role="alert">{error}</p>}
   </div>

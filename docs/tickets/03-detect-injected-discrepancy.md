@@ -4,9 +4,11 @@
 
 **Blocked by:** 02: Create and observe a genuine Sandbox payout.
 
-**Status:** ready-for-agent
+**Status:** done.
 
-- [ ] The payout record and immutable event history distinguish the real provider result from the injected fault.
-- [ ] Reconciliation opens an incident automatically when the item is `SUCCESS` and the payout record is stale.
-- [ ] The UI labels the skipped update as injected and does not describe it as a missing PayPal webhook.
-- [ ] A non-`SUCCESS` item does not produce the completed-payout discrepancy.
+- [x] The payout record and immutable event history distinguish the real provider result from the injected fault.
+- [x] Reconciliation opens an incident automatically when the item is `SUCCESS` and the payout record is stale.
+- [x] The UI labels the skipped update as injected and does not describe it as a missing PayPal webhook.
+- [x] A non-`SUCCESS` item does not produce the completed-payout discrepancy.
+
+Completed 21 October 2026: PayPal item `SUCCESS` is recorded separately from the internal record, which remains `pending` in the injected scenario. Reconciliation opens the incident in the same transaction that saves the provider observation and fault event. Incident Lab displays both states side by side and labels each event by source. Scripted HTTP and PostgreSQL integration tests cover successful, pending, and non-success items.

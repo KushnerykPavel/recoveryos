@@ -101,6 +101,9 @@ func (s *Service) CreatePayout(ctx context.Context, token, requestedScenario str
 	if !created && requestedScenario != "" && requestedScenario != payout.Scenario {
 		return recovery.Snapshot{}, ErrScenarioConflict
 	}
+	if snapshot.Incident != nil || payout.Status == "completed" || payout.Status == "corrected" {
+		return snapshot, nil
+	}
 	if created {
 		batch, err := s.provider.CreatePayout(ctx, payout.CreationKey, payout.SenderItemID)
 		persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)

@@ -225,17 +225,18 @@ func (s *Store) ObserveSuccess(ctx context.Context, payoutID, itemID string) err
 	}
 	defer tx.Rollback(ctx)
 	var sessionID, status, scenario string
-	var existingItemID pgtype.Text
+	var existingItemID, providerStatus pgtype.Text
 	err = tx.QueryRow(ctx, `
-		SELECT session_id::text, status, scenario, item_id FROM payout_records WHERE id = $1 FOR UPDATE`, payoutID,
-	).Scan(&sessionID, &status, &scenario, &existingItemID)
+		SELECT session_id::text, status, scenario, item_id, provider_status
+		FROM payout_records WHERE id = $1 FOR UPDATE`, payoutID,
+	).Scan(&sessionID, &status, &scenario, &existingItemID, &providerStatus)
 	if err != nil {
 		return err
 	}
 	if existingItemID.Valid && existingItemID.String != itemID {
 		return errors.New("PayPal payout item identity changed")
 	}
-	if status == "stale" || status == "completed" {
+	if status == "stale" || status == "completed" || (providerStatus.Valid && providerStatus.String == "SUCCESS") {
 		return nil
 	}
 	if status != "pending" {
@@ -243,7 +244,7 @@ func (s *Store) ObserveSuccess(ctx context.Context, payoutID, itemID string) err
 	}
 	nextStatus := "completed"
 	if scenario == recovery.ScenarioMissedUpdate {
-		nextStatus = "stale"
+		nextStatus = "pending"
 	}
 	_, err = tx.Exec(ctx, `
 		UPDATE payout_records SET item_id = $2, provider_status = 'SUCCESS', status = $3

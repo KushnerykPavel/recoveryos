@@ -116,8 +116,13 @@ func TestPostgresRecoveryWorkflow(t *testing.T) {
 		t.Fatalf("reading without a cookie returned %d", status)
 	}
 	_, snapshot, _ := requestWithScenario(t, mux, http.MethodPost, "/api/payouts", cookie, "missed-update")
-	if snapshot.Payout == nil || snapshot.Payout.Status != "stale" || snapshot.Incident == nil {
+	if snapshot.Payout == nil || snapshot.Payout.Status != "pending" || snapshot.Payout.ProviderStatus != "SUCCESS" || snapshot.Incident == nil {
 		t.Fatalf("missing incident after provider SUCCESS: %+v", snapshot)
+	}
+	if len(snapshot.Events) != 3 || snapshot.Events[1].Source != "paypal" ||
+		snapshot.Events[1].Kind != "item_observed" || snapshot.Events[1].Details != "provider-item-1:SUCCESS" ||
+		snapshot.Events[2].Source != "injected" || snapshot.Events[2].Kind != "internal_update_skipped" {
+		t.Fatalf("provider evidence and injected fault were not distinct: %+v", snapshot.Events)
 	}
 	_, _, _ = request(t, mux, http.MethodPost, "/api/payouts", cookie)
 	status, other, _ := request(t, mux, http.MethodGet, "/api/sessions/current?session_id="+first.Session.ID, otherCookie)
@@ -155,7 +160,7 @@ func TestPostgresPayoutItemOutcomes(t *testing.T) {
 		wantProvider string
 		wantIncident bool
 	}{
-		{name: "pending then success", statuses: []string{"PENDING", "SUCCESS"}, wantHTTP: http.StatusOK, wantRecord: "stale", wantProvider: "SUCCESS", wantIncident: true},
+		{name: "pending then success", statuses: []string{"PENDING", "SUCCESS"}, wantHTTP: http.StatusOK, wantRecord: "pending", wantProvider: "SUCCESS", wantIncident: true},
 		{name: "failed item", statuses: []string{"FAILED"}, wantHTTP: http.StatusOK, wantRecord: "pending", wantProvider: "FAILED"},
 		{name: "unclaimed item", statuses: []string{"UNCLAIMED"}, wantHTTP: http.StatusOK, wantRecord: "pending", wantProvider: "UNCLAIMED"},
 		{name: "unknown item status", statuses: []string{"UNKNOWN"}, wantHTTP: http.StatusOK, wantRecord: "pending", wantProvider: "UNKNOWN"},
