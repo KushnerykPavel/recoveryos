@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/KushnerykPavel/recoveryos/api/internal/domain/recovery"
+	"github.com/KushnerykPavel/recoveryos/api/internal/usecase/investigation"
 	recoveryuc "github.com/KushnerykPavel/recoveryos/api/internal/usecase/recovery"
 )
 
@@ -194,6 +195,56 @@ func (s *Store) RecordRejectedApproval(ctx context.Context, sessionID, payoutID,
 		return errors.New("payout record does not belong to session")
 	}
 	return nil
+}
+
+// CorrectRecord locks the payout and incident so only one approval can change
+// the record. The three audit events and both state changes share a transaction.
+func (s *Store) CorrectRecord(ctx context.Context, sessionID, incidentID, payoutID string, item recoveryuc.Item) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var recordStatus, incidentStatus, senderItemID string
+	var batchID, itemID, providerStatus pgtype.Text
+	var supported bool
+	err = tx.QueryRow(ctx, `
+		SELECT p.status, i.status, p.batch_id, p.sender_item_id, p.item_id, p.provider_status,
+			EXISTS (SELECT 1 FROM investigations v WHERE v.session_id = $1 AND v.incident_id = $2
+				AND v.id = (SELECT max(id) FROM investigations WHERE session_id = $1 AND incident_id = $2)
+				AND v.result->>'proposed_action' = 'correct_payout_record'
+				AND v.result->>'item_id' = $4 AND v.result->>'item_status' = 'SUCCESS')
+		FROM payout_records p JOIN incidents i ON i.payout_id = p.id
+		WHERE p.session_id = $1 AND i.session_id = $1 AND i.id = $2 AND p.id = $3
+		FOR UPDATE OF p, i`, sessionID, incidentID, payoutID, item.ID,
+	).Scan(&recordStatus, &incidentStatus, &batchID, &senderItemID, &itemID, &providerStatus, &supported)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return investigation.ErrCorrectionConflict
+	}
+	if err != nil {
+		return err
+	}
+	if recordStatus != "pending" || incidentStatus != "open" || !supported ||
+		!batchID.Valid || batchID.String != item.BatchID || senderItemID != item.SenderItemID ||
+		!itemID.Valid || itemID.String != item.ID || !providerStatus.Valid || providerStatus.String != "SUCCESS" || item.Status != "SUCCESS" {
+		return investigation.ErrCorrectionConflict
+	}
+	if _, err := tx.Exec(ctx, `UPDATE payout_records SET status = 'corrected' WHERE id = $1`, payoutID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE incidents SET status = 'resolved' WHERE id = $1`, incidentID); err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO payout_events (session_id, payout_id, source, kind, details) VALUES
+		($1, $2, 'paypal', 'provider_verification', $3),
+		($1, $2, 'system', 'operator_approval', $4),
+		($1, $2, 'system', 'record_corrected', $5)`,
+		sessionID, payoutID, "Fresh PayPal item "+item.ID+":SUCCESS", "Approved correction for incident "+incidentID,
+		"Payout record corrected to match PayPal item "+item.ID)
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Store) ReservePayout(ctx context.Context, sessionID, scenario string) (recovery.Payout, bool, error) {

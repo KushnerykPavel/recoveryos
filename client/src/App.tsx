@@ -252,17 +252,17 @@ function State({ label, value }: { label: string; value: string }) {
   return <div className="state-row"><span>{label}</span><strong>{value}</strong></div>
 }
 
-function IncidentEvidence({ payout, incident, events }: { payout: Payout; incident: Incident; events: Event[] }) {
+export function IncidentEvidence({ payout, incident, events }: { payout: Payout; incident: Incident; events: Event[] }) {
   return <div className="panel incident-evidence">
     <span className="eyebrow">{incident.status.toUpperCase()} INCIDENT · {incident.id.slice(0, 8)}</span>
-    <h2>PayPal payout completed, internal record pending</h2>
-    <p>Reconciliation confirmed the PayPal item succeeded while the payout record still says pending.</p>
+    <h2>{incident.status === 'resolved' ? 'Reconciled payout record' : 'PayPal payout completed, internal record pending'}</h2>
+    <p>{incident.status === 'resolved' ? 'The payout record now agrees with the verified PayPal item. This incident is resolved.' : 'Reconciliation confirmed the PayPal item succeeded while the payout record still says pending.'}</p>
     <div className="evidence-columns">
       <div><strong>PayPal item evidence</strong><State label="Item ID" value={payout.item_id ?? '—'} /><State label="Item status" value={payout.provider_status ?? '—'} /></div>
-      <div><strong>Internal payout record</strong><State label="Record status" value={payout.status} /><p className="injected-note">Injected fault: RecoveryOS deliberately skipped the record update.</p></div>
+      <div><strong>Internal payout record</strong><State label="Record status" value={payout.status} /><p className="injected-note">{incident.status === 'resolved' ? 'The approved correction repaired the deliberately skipped record update.' : 'Injected fault: RecoveryOS deliberately skipped the record update.'}</p></div>
     </div>
     <h3>Event history</h3>
-    <ol className="event-history">{events.map(event => <li key={event.id}><span className={`event-source ${event.source}`}>{event.source === 'paypal' ? 'PayPal' : event.source === 'injected' ? 'Injected fault' : 'System'}</span><strong>{event.kind.replaceAll('_', ' ')}</strong><span>{event.details}</span><time dateTime={event.occurred_at}>{new Date(event.occurred_at).toLocaleString()}</time></li>)}</ol>
+    <ol className="event-history">{events.map(event => <li key={event.id}><span className={`event-source ${event.source}`}>{event.source === 'paypal' ? 'PayPal' : event.source === 'injected' ? 'Injected fault' : 'System'}</span><strong>{{ provider_verification: 'Provider verification', operator_approval: 'Operator approval', record_corrected: 'Record correction' }[event.kind] ?? event.kind.replaceAll('_', ' ')}</strong><span>{event.details}</span><time dateTime={event.occurred_at}>{new Date(event.occurred_at).toLocaleString()}</time></li>)}</ol>
   </div>
 }
 
@@ -271,8 +271,8 @@ export function InvestigationPanel({ incident, result, loading, error, onInvesti
   return <div className="panel investigation-panel">
     <span className="eyebrow">INCIDENT INVESTIGATION · {incident.id.slice(0, 8)}</span>
     <h2>Investigate the discrepancy</h2>
-    <p>The read-only investigation uses the incident, payout record, current PayPal item, event history, and recovery policy.</p>
-    <button className="primary" onClick={onInvestigate} disabled={loading}>{loading ? 'Investigating…' : result ? 'Run investigation again' : 'Start AI investigation ↗'}</button>
+    <p>{incident.status === 'resolved' ? 'Record correction approved. The diagnosis and cited evidence remain available below.' : 'The read-only investigation uses the incident, payout record, current PayPal item, event history, and recovery policy.'}</p>
+    {incident.status === 'open' && <button className="primary" onClick={onInvestigate} disabled={loading}>{loading ? 'Investigating…' : result ? 'Run investigation again' : 'Start AI investigation ↗'}</button>}
     {loading && <p role="status">Reading evidence and preparing a diagnosis…</p>}
     {error && <p className="error" role="alert">{error}</p>}
     {result && <div className="investigation-result">
@@ -282,7 +282,7 @@ export function InvestigationPanel({ incident, result, loading, error, onInvesti
       <State label="PayPal item" value={`${result.item_id} · ${result.item_status}`} />
       <h3>Diagnosis</h3><p>{result.diagnosis}</p>
       <h3>Proposed action</h3><p>{result.proposed_action === 'correct_payout_record' ? 'Correct the internal payout record after operator approval and fresh PayPal verification.' : 'Leave the payout record unchanged.'}</p>
-      {result.proposed_action === 'correct_payout_record' && onApprove && <button className="secondary" onClick={onApprove} disabled={approving}>{approving ? 'Checking PayPal item…' : 'Approve record correction'}</button>}
+      {incident.status === 'open' && result.proposed_action === 'correct_payout_record' && onApprove && <button className="secondary" onClick={onApprove} disabled={approving}>{approving ? 'Checking PayPal item…' : 'Approve record correction'}</button>}
       {approvalError && <p className="error" role="alert">{approvalError}</p>}
       <h3>Cited evidence</h3>
       <ul className="investigation-evidence">{result.evidence.map((evidence, index) => <li key={`${evidence.source}-${evidence.reference}-${index}`}><span className={`event-source ${evidence.source === 'provider' ? 'paypal' : evidence.source}`}>{labels[evidence.source]}</span><code>{evidence.reference}</code><p>{evidence.finding}</p></li>)}</ul>

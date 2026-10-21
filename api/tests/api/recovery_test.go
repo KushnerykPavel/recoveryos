@@ -14,6 +14,7 @@ import (
 
 	"github.com/KushnerykPavel/recoveryos/api/internal/domain/recovery"
 	recoveryhandler "github.com/KushnerykPavel/recoveryos/api/internal/handlers/recovery"
+	"github.com/KushnerykPavel/recoveryos/api/internal/usecase/investigation"
 	recoveryuc "github.com/KushnerykPavel/recoveryos/api/internal/usecase/recovery"
 )
 
@@ -103,6 +104,34 @@ func (s *memoryStore) RecordRejectedApproval(_ context.Context, sessionID, payou
 		ID: int64(len(s.events[sessionID]) + 1), Source: "system", Kind: "record_correction_rejected",
 		Details: reason, OccurredAt: time.Now(),
 	})
+	return nil
+}
+
+func (s *memoryStore) CorrectRecord(_ context.Context, sessionID, incidentID, payoutID string, item recoveryuc.Item) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	payout, ok := s.payouts[sessionID]
+	incident := s.items[payoutID]
+	proposal := s.investigations[sessionID]
+	if !ok || payout.ID != payoutID || incident.ID != incidentID || incident.Status != "open" ||
+		payout.Status != "pending" || payout.ItemID != item.ID || payout.BatchID != item.BatchID ||
+		payout.SenderItemID != item.SenderItemID || payout.ProviderStatus != "SUCCESS" || item.Status != "SUCCESS" ||
+		proposal.ProposedAction != "correct_payout_record" || proposal.ItemID != item.ID {
+		return investigation.ErrCorrectionConflict
+	}
+	payout.Status = "corrected"
+	incident.Status = "resolved"
+	s.payouts[sessionID] = payout
+	s.items[payoutID] = incident
+	for _, event := range []recovery.Event{
+		{Source: "paypal", Kind: "provider_verification", Details: "Fresh PayPal item " + item.ID + ":SUCCESS"},
+		{Source: "system", Kind: "operator_approval", Details: "Approved correction for incident " + incidentID},
+		{Source: "system", Kind: "record_corrected", Details: "Payout record corrected to match PayPal item " + item.ID},
+	} {
+		event.ID = int64(len(s.events[sessionID]) + 1)
+		event.OccurredAt = time.Now()
+		s.events[sessionID] = append(s.events[sessionID], event)
+	}
 	return nil
 }
 

@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -23,6 +25,65 @@ import (
 	"github.com/KushnerykPavel/recoveryos/api/internal/usecase/investigation"
 	recoveryuc "github.com/KushnerykPavel/recoveryos/api/internal/usecase/recovery"
 )
+
+type unavailableModel struct{}
+
+func (unavailableModel) Respond(context.Context, investigation.Request) (investigation.Response, error) {
+	return investigation.Response{}, errors.New("model unavailable")
+}
+
+func TestPostgresConcurrentApprovalsCommitOneCorrection(t *testing.T) {
+	db := postgresTestPool(t)
+	store := postgres.New(db, 1)
+	provider := &fakeProvider{statuses: []string{"SUCCESS"}}
+	service := recoveryuc.NewService(store, provider, 0, 0).WithBackup(recoveryuc.BackupEvidence{
+		CreationKey: "precreated-key", SenderItemID: "item-a", BatchID: "batch-1", ItemID: "provider-item-1",
+	})
+	investigator := investigation.New(service, provider, unavailableModel{}, store)
+	handler := recoveryhandler.New(service, false, slog.New(slog.NewTextHandler(io.Discard, nil))).WithInvestigator(investigator)
+	mux := http.NewServeMux()
+	handler.Register(mux)
+	_, _, firstCookie := request(t, mux, http.MethodPost, "/api/sessions", nil)
+	_, started, cookie := request(t, mux, http.MethodPost, "/api/sessions/backup", firstCookie)
+	if status, result := investigateRequest(t, mux, cookie); status != http.StatusOK || result.ProposedAction != "correct_payout_record" {
+		t.Fatalf("investigation: %d %+v", status, result)
+	}
+	const attempts = 8
+	start := make(chan struct{})
+	results := make(chan int, attempts)
+	var wg sync.WaitGroup
+	for range attempts {
+		wg.Go(func() {
+			<-start
+			status, _ := approvalRequest(t, mux, cookie, started.Incident.ID)
+			results <- status
+		})
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	successes := 0
+	for status := range results {
+		if status == http.StatusNoContent {
+			successes++
+		} else if status != http.StatusConflict {
+			t.Fatalf("approval status %d", status)
+		}
+	}
+	_, after, _ := request(t, mux, http.MethodGet, "/api/sessions/current", cookie)
+	var corrections, approvals, verifications int
+	if err := db.QueryRow(t.Context(), `SELECT
+		count(*) FILTER (WHERE kind = 'record_corrected'),
+		count(*) FILTER (WHERE kind = 'operator_approval'),
+		count(*) FILTER (WHERE kind = 'provider_verification')
+		FROM payout_events WHERE payout_id = $1`, started.Payout.ID).Scan(&corrections, &approvals, &verifications); err != nil {
+		t.Fatal(err)
+	}
+	if successes != 1 || corrections != 1 || approvals != 1 || verifications != 1 ||
+		after.Payout.Status != "corrected" || after.Incident.Status != "resolved" || provider.createCalls != 0 {
+		t.Fatalf("successes=%d audit=%d/%d/%d snapshot=%+v creates=%d", successes, corrections, approvals, verifications, after, provider.createCalls)
+	}
+}
 
 func TestPostgresWrongSessionApprovalIsRecordedWithoutPayout(t *testing.T) {
 	db := postgresTestPool(t)

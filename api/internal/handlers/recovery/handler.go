@@ -153,10 +153,6 @@ func (h *Handler) fail(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": rejected.Reason})
 		return
 	}
-	if errors.Is(err, investigation.ErrCorrectionPending) {
-		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": err.Error()})
-		return
-	}
 	if errors.Is(err, investigation.ErrNoIncident) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "no open incident in this session"})
 		return

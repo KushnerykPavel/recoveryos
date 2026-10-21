@@ -13,7 +13,7 @@ import (
 
 var ErrNoIncident = errors.New("no open incident in this session")
 var ErrInvalidDiagnosis = errors.New("invalid investigation result")
-var ErrCorrectionPending = errors.New("record correction is not yet available")
+var ErrCorrectionConflict = errors.New("record correction is no longer available")
 
 type ApprovalRejected struct{ Reason string }
 
@@ -62,6 +62,7 @@ type Result = recovery.Investigation
 type Store interface {
 	SaveInvestigation(context.Context, string, string, Result) error
 	RecordRejectedApproval(context.Context, string, string, string) error
+	CorrectRecord(context.Context, string, string, string, recoveryuc.Item) error
 }
 
 type Service struct {
@@ -75,12 +76,15 @@ func New(snapshots SnapshotReader, payouts PayoutReader, model Model, store Stor
 	return &Service{snapshots: snapshots, payouts: payouts, model: model, store: store}
 }
 
-// Approve checks the latest provider evidence before a record correction may
-// be committed. The correction itself is introduced by the next workflow step.
+// Approve checks the latest provider evidence before committing a correction.
 func (s *Service) Approve(ctx context.Context, token, incidentID string) error {
 	snapshot, err := s.snapshots.Snapshot(ctx, token)
 	if err != nil {
 		return err
+	}
+	if snapshot.Incident != nil && snapshot.Incident.ID == incidentID &&
+		(snapshot.Incident.Status == "resolved" || snapshot.Payout != nil && snapshot.Payout.Status == "corrected") {
+		return &ApprovalRejected{Reason: "record correction was already approved"}
 	}
 	reject := func(reason string) error {
 		payoutID := ""
@@ -117,7 +121,13 @@ func (s *Service) Approve(ctx context.Context, token, incidentID string) error {
 		}
 		return reject("PayPal payout item is " + item.Status + ", not SUCCESS")
 	}
-	return ErrCorrectionPending
+	if err := s.store.CorrectRecord(ctx, snapshot.Session.ID, incidentID, payout.ID, item); err != nil {
+		if errors.Is(err, ErrCorrectionConflict) {
+			return &ApprovalRejected{Reason: "payout record is no longer stale or approval was already used"}
+		}
+		return fmt.Errorf("correct payout record: %w", err)
+	}
+	return nil
 }
 
 const policy = "Correct only the internal payout record after a fresh exact-item PayPal SUCCESS verification, session ownership and still-stale record checks. Never create or retry a payout. No manual override."

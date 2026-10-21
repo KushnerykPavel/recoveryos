@@ -12,7 +12,7 @@ const compiled = (await bundle.generate({ format: 'cjs' })).output[0].code
 await bundle.close()
 const module = { exports: {} }
 new Function('require', 'module', 'exports', compiled)(require, module, module.exports)
-const { InvestigationPanel } = module.exports
+const { InvestigationPanel, IncidentEvidence } = module.exports
 const scriptedDiagnosis = JSON.parse(readFileSync(new URL('./fixtures/investigation.json', import.meta.url), 'utf8'))
 
 test('Incident Lab shows the diagnosis, proposal, and provenance of cited evidence', () => {
@@ -46,4 +46,24 @@ test('Incident Lab shows why a proposed correction was rejected', () => {
   }))
   assert.ok(markup.includes('Approve record correction'))
   assert.ok(markup.includes('PayPal payout item is FAILED, not SUCCESS'))
+})
+
+test('Incident Lab shows a resolved correction and distinct audit actions', () => {
+  const incident = { id: scriptedDiagnosis.incident_id, status: 'resolved' }
+  const investigation = renderToStaticMarkup(React.createElement(InvestigationPanel, {
+    incident, result: scriptedDiagnosis, loading: false, error: '', onInvestigate() {}, onApprove() {},
+  }))
+  assert.ok(investigation.includes('Record correction approved'))
+  assert.ok(!investigation.includes('Approve record correction'))
+  const evidence = renderToStaticMarkup(React.createElement(IncidentEvidence, {
+    incident, payout: { status: 'corrected', provider_status: 'SUCCESS', item_id: scriptedDiagnosis.item_id },
+    events: [
+      { id: 1, source: 'paypal', kind: 'provider_verification', details: 'Fresh item', occurred_at: '2026-10-21T10:00:00Z' },
+      { id: 2, source: 'system', kind: 'operator_approval', details: 'Approved', occurred_at: '2026-10-21T10:00:01Z' },
+      { id: 3, source: 'system', kind: 'record_corrected', details: 'Corrected', occurred_at: '2026-10-21T10:00:02Z' },
+    ],
+  }))
+  for (const label of ['Provider verification', 'Operator approval', 'Record correction', 'Reconciled payout record']) {
+    assert.ok(evidence.includes(label), `missing ${label}`)
+  }
 })

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -21,8 +22,10 @@ func approvalRequest(t *testing.T, server http.Handler, cookie *http.Cookie, inc
 	var body struct {
 		Error string `json:"error"`
 	}
-	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
-		t.Fatal(err)
+	if response.Body.Len() > 0 {
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return response.Code, body.Error
 }
@@ -155,7 +158,7 @@ func TestApprovalRejectsFreshFailedItemAndRecordsAttempt(t *testing.T) {
 	}
 }
 
-func TestVerifiedProposalAwaitsRecordCorrectionWithoutFalseRejectionEvent(t *testing.T) {
+func TestVerifiedProposalCorrectsRecordOnce(t *testing.T) {
 	server, provider, _, _ := investigationServer(t, "correct_payout_record", "SUCCESS", "")
 	_, _, cookie := request(t, server, http.MethodPost, "/api/sessions", nil)
 	_, started, _ := requestWithScenario(t, server, http.MethodPost, "/api/payouts", cookie, "missed-update")
@@ -163,11 +166,79 @@ func TestVerifiedProposalAwaitsRecordCorrectionWithoutFalseRejectionEvent(t *tes
 		t.Fatalf("investigation status = %d", status)
 	}
 	status, reason := approvalRequest(t, server, cookie, started.Incident.ID)
-	if status != http.StatusNotImplemented || !strings.Contains(reason, "not yet available") {
+	if status != http.StatusNoContent || reason != "" {
 		t.Fatalf("verified proposal: %d %q", status, reason)
 	}
 	_, after, _ := request(t, server, http.MethodGet, "/api/sessions/current", cookie)
-	if after.Payout.Status != "pending" || after.Incident.Status != "open" || after.Events[len(after.Events)-1].Kind != "investigation_completed" || provider.createCalls != 1 {
-		t.Fatalf("verified proposal changed record or logged a false rejection: %+v", after)
+	if after.Payout.Status != "corrected" || after.Incident.Status != "resolved" || provider.createCalls != 1 {
+		t.Fatalf("verified proposal did not resolve discrepancy: %+v", after)
+	}
+	for _, kind := range []string{"provider_verification", "operator_approval", "record_corrected"} {
+		found := false
+		for _, event := range after.Events {
+			if event.Kind == kind {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("missing %s audit event: %+v", kind, after.Events)
+		}
+	}
+	if status, _ := approvalRequest(t, server, cookie, started.Incident.ID); status != http.StatusConflict {
+		t.Fatalf("repeat approval returned %d", status)
+	}
+	_, repeated, _ := request(t, server, http.MethodGet, "/api/sessions/current", cookie)
+	corrections := 0
+	for _, event := range repeated.Events {
+		if event.Kind == "record_corrected" {
+			corrections++
+		}
+	}
+	if corrections != 1 || len(repeated.Events) != len(after.Events) || repeated.Payout.Status != "corrected" || provider.createCalls != 1 {
+		t.Fatalf("repeat approval had another effect: %+v", repeated)
+	}
+}
+
+func TestConcurrentApprovalsCorrectRecordOnce(t *testing.T) {
+	server, provider, _, _ := investigationServer(t, "correct_payout_record", "SUCCESS", "")
+	_, _, cookie := request(t, server, http.MethodPost, "/api/sessions", nil)
+	_, started, _ := requestWithScenario(t, server, http.MethodPost, "/api/payouts", cookie, "missed-update")
+	if status, _ := investigateRequest(t, server, cookie); status != http.StatusOK {
+		t.Fatalf("investigation status = %d", status)
+	}
+	const attempts = 12
+	results := make(chan int, attempts)
+	var ready sync.WaitGroup
+	ready.Add(attempts)
+	start := make(chan struct{})
+	for range attempts {
+		go func() {
+			ready.Done()
+			<-start
+			status, _ := approvalRequest(t, server, cookie, started.Incident.ID)
+			results <- status
+		}()
+	}
+	ready.Wait()
+	close(start)
+	successes := 0
+	for range attempts {
+		switch status := <-results; status {
+		case http.StatusNoContent:
+			successes++
+		case http.StatusConflict:
+		default:
+			t.Fatalf("approval status = %d", status)
+		}
+	}
+	_, after, _ := request(t, server, http.MethodGet, "/api/sessions/current", cookie)
+	corrections := 0
+	for _, event := range after.Events {
+		if event.Kind == "record_corrected" {
+			corrections++
+		}
+	}
+	if successes != 1 || corrections != 1 || after.Payout.Status != "corrected" || after.Incident.Status != "resolved" || provider.createCalls != 1 {
+		t.Fatalf("successes=%d corrections=%d snapshot=%+v createCalls=%d", successes, corrections, after, provider.createCalls)
 	}
 }
