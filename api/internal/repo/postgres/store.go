@@ -92,9 +92,10 @@ func (s *Store) ReservePayout(ctx context.Context, sessionID, scenario string) (
 	var created bool
 	err = tx.QueryRow(ctx, `
 		INSERT INTO payout_records (session_id, creation_key, sender_item_id, scenario)
-		VALUES ($1, 'recoveryos-' || $1::text, 'item-' || $1::text, $2)
+		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (session_id) DO NOTHING
-		RETURNING id::text, session_id::text, creation_key, sender_item_id, status, scenario, created_at`, sessionID, scenario,
+		RETURNING id::text, session_id::text, creation_key, sender_item_id, status, scenario, created_at`,
+		sessionID, "recoveryos-"+sessionID, "item-"+sessionID, scenario,
 	).Scan(&payout.ID, &payout.SessionID, &payout.CreationKey, &payout.SenderItemID, &payout.Status, &payout.Scenario, &payout.CreatedAt)
 	if err == nil {
 		created = true

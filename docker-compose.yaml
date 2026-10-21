@@ -2,18 +2,67 @@ services:
   db:
     image: postgres:17
     environment:
-      POSTGRES_DB: recoveryos
-      POSTGRES_USER: recoveryos
-      POSTGRES_PASSWORD: recoveryos
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U recoveryos -d recoveryos"]
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 2s
       timeout: 2s
       retries: 20
     volumes:
       - recoveryos_pgdata:/var/lib/postgresql/data
+
+  migrate:
+    image: recoveryos-migrate:local
+    build:
+      context: ./api
+    command: ["/app/migrate", "up"]
+    env_file:
+      - ./api/.env
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    image: recoveryos-api:local
+    build:
+      context: ./api
+    env_file:
+      - ./api/.env
+    environment:
+      ADDRESS: 0.0.0.0:8080
+    ports:
+      - "127.0.0.1:${API_PORT:-8081}:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  client:
+    build:
+      context: ./client
+    ports:
+      - "127.0.0.1:${CLIENT_PORT:-8082}:80"
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "127.0.0.1:${NGINX_PORT:-8080}:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      api:
+        condition: service_healthy
+      client:
+        condition: service_started
 
 volumes:
   recoveryos_pgdata:

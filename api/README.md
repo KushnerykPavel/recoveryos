@@ -12,11 +12,33 @@ use source `paypal`.
 Requirements: Go 1.26.1, Task, Docker with PostgreSQL, and PayPal Sandbox
 credentials that can create Payouts. The receiver must be a Sandbox account.
 
-From the repository root:
+For the complete local stack, copy the example files if the local files do not
+already exist, fill the PayPal Sandbox credentials, and start Compose:
 
 ```sh
-cp api/.env.example api/.env
-# Fill PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET and PAYPAL_SANDBOX_RECEIVER.
+test -f .env || cp .env.example .env
+test -f api/.env || cp api/.env.example api/.env
+# Set PostgreSQL credentials and ports in .env.
+# Keep api/.env DB_URL credentials in sync, and fill its PayPal values.
+task app:up
+curl -i http://127.0.0.1:8080/readyz
+```
+
+The client placeholder is at `http://127.0.0.1:8080/` by default; Nginx forwards `/api/`
+and health endpoints to the Go API. The `migrate` container applies the schema
+after PostgreSQL becomes healthy and before the API starts. The client folder
+currently contains a placeholder page; the planned React UI will replace it.
+
+The root `.env` sets `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, and the
+host ports `POSTGRES_PORT`, `API_PORT`, `CLIENT_PORT`, and `NGINX_PORT` for
+Compose. The API and migration containers read `DB_URL` from `api/.env`; in
+Compose its host must be `db` and its credentials must match the root `.env`.
+Both local env files are ignored by Git.
+
+For a Go process running directly on the host, set the host in `api/.env`'s
+`DB_URL` to `127.0.0.1` and load that file:
+
+```sh
 set -a
 . api/.env
 set +a

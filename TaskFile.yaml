@@ -7,6 +7,11 @@ env:
   GOCACHE: '{{.ROOT_DIR}}/api/.cache/go-build'
 
 tasks:
+  app:up:
+    desc: Build and start the complete local application
+    cmds:
+      - docker compose up --build -d --wait
+
   db:up:
     desc: Start local PostgreSQL
     cmds:
