@@ -37,7 +37,12 @@ detection. The page shows the stable creation key, batch ID, payout item ID,
 and item status separately. It keeps checking while the item is pending and
 restores the session's payout state after a reload. An uncertain creation keeps
 its original key visible and offers no second create action. A daily creation
-limit is shown in the page; the pre-created payout fallback is a later slice.
+limit is shown in the page. If the item has not reached item-level `SUCCESS`
+after 30 seconds, or the global daily creation limit is reached, the visitor
+can switch to a pre-created Sandbox payout. Switching opens a new isolated demo
+session with its own payout record, event history, and incident. The original
+live session remains separate; switching never creates another PayPal payout.
+The page labels the backup as pre-created.
 
 Set `OPENAI_API_KEY` in `api/.env` to enable Incident Lab investigations. The
 model defaults to `gpt-6-luna`; `OPENAI_MODEL` overrides it. The key stays on
@@ -106,11 +111,18 @@ The API reserves a stable `sender_batch_id` before making the provider call.
 If creation times out or its result is ambiguous, the record becomes
 `provider_unknown` and the API does not issue a second create request. The
 configurable `DAILY_PAYOUT_LIMIT` also caps fresh payouts across sessions.
+Backup sessions do not consume that limit. The default backup IDs come from the
+successful Sandbox smoke test below. Set `BACKUP_PAYOUT_CREATION_KEY`,
+`BACKUP_PAYOUT_SENDER_ITEM_ID`, `BACKUP_PAYOUT_BATCH_ID`, and
+`BACKUP_PAYOUT_ITEM_ID` to use a different pre-created item. The API verifies
+the configured batch, item, sender item ID, and `SUCCESS` status with PayPal
+before opening a backup session. Use a payout from the Sandbox account whose
+credentials the API is running with.
 
 `POST /api/incidents/approve` rechecks the exact PayPal payout item and
 records rejected correction attempts in the session event history. A verified
-proposal does not yet change the payout record. The pre-created payout fallback
-and atomic record correction belong to later roadmap stages.
+proposal does not yet change the payout record. Atomic record correction
+belongs to a later roadmap stage.
 
 ## Verification
 
@@ -135,7 +147,7 @@ task paypal:smoke
 The command creates one payout, polls the specific payout item for up to two
 minutes, and records its ID, status, and time to `SUCCESS` in
 `api/.local/paypal-smoke.json`. This private file is ignored by Git and can
-serve as the source of a pre-created Sandbox item for the future backup flow.
+serve as the source of a pre-created Sandbox item for the backup flow.
 Running the command again with the same file only resumes observation or
 reports the existing result. If creation was interrupted before its batch ID
 was saved, the command stops rather than risking another payout. Inspect the

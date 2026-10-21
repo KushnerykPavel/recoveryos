@@ -33,6 +33,43 @@ func (s *Store) CreateSession(ctx context.Context, tokenHash []byte, expiresAt t
 	return session, err
 }
 
+func (s *Store) CreateBackupSession(ctx context.Context, tokenHash []byte, expiresAt time.Time, evidence recoveryuc.BackupEvidence) (recovery.Session, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return recovery.Session{}, err
+	}
+	defer tx.Rollback(ctx)
+	var session recovery.Session
+	err = tx.QueryRow(ctx, `INSERT INTO sessions (token_hash, expires_at) VALUES ($1, $2)
+		RETURNING id::text, created_at, expires_at`, tokenHash, expiresAt).Scan(&session.ID, &session.CreatedAt, &session.ExpiresAt)
+	if err != nil {
+		return recovery.Session{}, err
+	}
+	var payoutID string
+	err = tx.QueryRow(ctx, `INSERT INTO payout_records
+		(session_id, creation_key, sender_item_id, batch_id, item_id, provider_status, status, scenario, origin)
+		VALUES ($1, $2, $3, $4, $5, 'SUCCESS', 'pending', 'missed-update', 'precreated')
+		RETURNING id::text`, session.ID, evidence.CreationKey, evidence.SenderItemID, evidence.BatchID, evidence.ItemID).Scan(&payoutID)
+	if err != nil {
+		return recovery.Session{}, err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO payout_events (session_id, payout_id, source, kind, details) VALUES
+		($1, $2, 'system', 'precreated_payout_attached', 'Existing Sandbox payout evidence attached to this demo session'),
+		($1, $2, 'paypal', 'item_observed', $3),
+		($1, $2, 'injected', 'internal_update_skipped', 'successful provider item deliberately left stale')`, session.ID, payoutID, evidence.ItemID+":SUCCESS")
+	if err != nil {
+		return recovery.Session{}, err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO incidents (session_id, payout_id, status) VALUES ($1, $2, 'open')`, session.ID, payoutID)
+	if err != nil {
+		return recovery.Session{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return recovery.Session{}, err
+	}
+	return session, nil
+}
+
 func (s *Store) Snapshot(ctx context.Context, tokenHash []byte) (recovery.Snapshot, error) {
 	var snapshot recovery.Snapshot
 	snapshot.Events = []recovery.Event{}
@@ -209,10 +246,10 @@ func (s *Store) getPayout(ctx context.Context, sessionID string) (recovery.Payou
 	var batchID, itemID, providerStatus pgtype.Text
 	err := s.db.QueryRow(ctx, `
 		SELECT id::text, session_id::text, creation_key, sender_item_id,
-		       batch_id, item_id, provider_status, status, scenario, created_at
+		       batch_id, item_id, provider_status, status, scenario, origin, created_at
 		FROM payout_records WHERE session_id = $1`, sessionID,
 	).Scan(&payout.ID, &payout.SessionID, &payout.CreationKey, &payout.SenderItemID,
-		&batchID, &itemID, &providerStatus, &payout.Status, &payout.Scenario, &payout.CreatedAt)
+		&batchID, &itemID, &providerStatus, &payout.Status, &payout.Scenario, &payout.Origin, &payout.CreatedAt)
 	if batchID.Valid {
 		payout.BatchID = batchID.String
 	}

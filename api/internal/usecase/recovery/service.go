@@ -16,11 +16,20 @@ var ErrSessionNotFound = errors.New("session not found")
 var ErrDailyLimit = errors.New("daily payout creation limit reached")
 var ErrInvalidScenario = errors.New("invalid payout scenario")
 var ErrScenarioConflict = errors.New("payout scenario cannot be changed")
+var ErrBackupUnavailable = errors.New("backup payout is unavailable")
+
+type BackupEvidence struct {
+	CreationKey  string
+	SenderItemID string
+	BatchID      string
+	ItemID       string
+}
 
 // Store persists the operational record and its evidence. ObserveSuccess must
 // record provider evidence and the selected internal update atomically.
 type Store interface {
 	CreateSession(ctx context.Context, tokenHash []byte, expiresAt time.Time) (recovery.Session, error)
+	CreateBackupSession(ctx context.Context, tokenHash []byte, expiresAt time.Time, evidence BackupEvidence) (recovery.Session, error)
 	Snapshot(ctx context.Context, tokenHash []byte) (recovery.Snapshot, error)
 	ReservePayout(ctx context.Context, sessionID, scenario string) (recovery.Payout, bool, error)
 	MarkCreateUncertain(ctx context.Context, payoutID string) error
@@ -51,10 +60,16 @@ type Service struct {
 	clock        func() time.Time
 	pollInterval time.Duration
 	waitTimeout  time.Duration
+	backup       BackupEvidence
 }
 
 func NewService(store Store, provider Provider, pollInterval, waitTimeout time.Duration) *Service {
 	return &Service{store: store, provider: provider, clock: time.Now, pollInterval: pollInterval, waitTimeout: waitTimeout}
+}
+
+func (s *Service) WithBackup(evidence BackupEvidence) *Service {
+	s.backup = evidence
+	return s
 }
 
 func TokenHash(token string) []byte {
@@ -63,16 +78,47 @@ func TokenHash(token string) []byte {
 }
 
 func (s *Service) CreateSession(ctx context.Context) (recovery.Snapshot, string, error) {
-	secret := make([]byte, 32)
-	if _, err := rand.Read(secret); err != nil {
-		return recovery.Snapshot{}, "", fmt.Errorf("generate session token: %w", err)
+	token, err := newToken()
+	if err != nil {
+		return recovery.Snapshot{}, "", err
 	}
-	token := base64.RawURLEncoding.EncodeToString(secret)
 	session, err := s.store.CreateSession(ctx, TokenHash(token), s.clock().Add(24*time.Hour))
 	if err != nil {
 		return recovery.Snapshot{}, "", err
 	}
 	return recovery.Snapshot{Session: session, Events: []recovery.Event{}}, token, nil
+}
+
+func newToken() (string, error) {
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		return "", fmt.Errorf("generate session token: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(secret), nil
+}
+
+func (s *Service) CreateBackupSession(ctx context.Context) (recovery.Snapshot, string, error) {
+	evidence := s.backup
+	if evidence.CreationKey == "" || evidence.SenderItemID == "" || evidence.BatchID == "" || evidence.ItemID == "" {
+		return recovery.Snapshot{}, "", ErrBackupUnavailable
+	}
+	item, err := s.provider.GetBatchItem(ctx, evidence.BatchID)
+	if err != nil {
+		return recovery.Snapshot{}, "", fmt.Errorf("verify backup payout: %w", err)
+	}
+	if item.BatchID != evidence.BatchID || item.ID != evidence.ItemID || item.SenderItemID != evidence.SenderItemID || item.Status != "SUCCESS" {
+		return recovery.Snapshot{}, "", ErrBackupUnavailable
+	}
+	token, err := newToken()
+	if err != nil {
+		return recovery.Snapshot{}, "", err
+	}
+	_, err = s.store.CreateBackupSession(ctx, TokenHash(token), s.clock().Add(24*time.Hour), evidence)
+	if err != nil {
+		return recovery.Snapshot{}, "", fmt.Errorf("create backup session: %w", err)
+	}
+	snapshot, err := s.store.Snapshot(ctx, TokenHash(token))
+	return snapshot, token, err
 }
 
 func (s *Service) Snapshot(ctx context.Context, token string) (recovery.Snapshot, error) {

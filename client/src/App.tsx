@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 
 type Session = { id: string; created_at: string; expires_at: string }
-type Payout = { id: string; creation_key: string; batch_id?: string; item_id?: string; status: string; provider_status?: string }
+type Payout = { id: string; creation_key: string; batch_id?: string; item_id?: string; status: string; provider_status?: string; origin: 'live' | 'precreated'; created_at: string }
 type Incident = { id: string; status: string }
 type Event = { id: number; source: string; kind: string; details: string; occurred_at: string }
 type Snapshot = { session: Session; payout?: Payout; incident?: Incident; investigation?: Investigation; events: Event[] }
@@ -28,6 +28,8 @@ export function App() {
   const [pollingPaused, setPollingPaused] = useState(false)
   const [payoutStateUnverified, setPayoutStateUnverified] = useState(false)
   const [dailyLimitReached, setDailyLimitReached] = useState(false)
+  const [switchingBackup, setSwitchingBackup] = useState(false)
+  const [now, setNow] = useState(Date.now())
   const [error, setError] = useState('')
   const [investigation, setInvestigation] = useState<Investigation | null>(null)
   const [investigating, setInvestigating] = useState(false)
@@ -47,6 +49,13 @@ export function App() {
   const payout = snapshot?.payout
   const awaitingBatch = payout?.status === 'creating'
   const awaitingItem = payout?.status === 'pending' && !!payout.batch_id && !snapshot?.incident && (!payout.provider_status || payout.provider_status === 'PENDING')
+  const backupWaiting = !!payout && payout.origin === 'live' && !snapshot?.incident && payout.provider_status !== 'SUCCESS'
+
+  useEffect(() => {
+    if (!backupWaiting) return
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [backupWaiting])
 
   useEffect(() => {
     if (creatingPayout || pollingPaused || (!awaitingBatch && !awaitingItem)) return
@@ -121,6 +130,26 @@ export function App() {
       setError(message)
     } finally {
       setCreatingPayout(false)
+    }
+  }
+
+  async function switchToBackup() {
+    if (switchingBackup) return
+    setSwitchingBackup(true)
+    setError('')
+    try {
+      const next = await getSnapshot('/api/sessions/backup', 'POST')
+      if (!next) throw new Error('Session expired. Start a new demo session.')
+      setSnapshot(next)
+      setInvestigation(null)
+      setDailyLimitReached(false)
+      setPollingPaused(false)
+      setPayoutStateUnverified(false)
+      setApprovalError('')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not open the backup payout')
+    } finally {
+      setSwitchingBackup(false)
     }
   }
 
@@ -207,7 +236,7 @@ export function App() {
         {loading ? <p className="loading" role="status">Loading your workspace…</p> : !snapshot ?
           <section className="welcome"><div className="eyebrow">WELCOME TO RECOVERYOS</div><h1>See recovery in action.</h1><p>Start a private demo workspace to explore how an incident moves from detection to a safe resolution.</p><div className="welcome-card"><span className="welcome-icon">◇</span><div><strong>Your own Incident Lab</strong><small>No account or credentials needed. Your session and activity are separate from other visitors.</small></div></div><button className="primary" onClick={startSession} disabled={starting}>{starting ? 'Starting…' : 'Start demo session'} ↗</button>{error && <p className="error" role="alert">{error}</p>}</section>
           : view === 'overview' ? <section className="page"><div className="eyebrow">YOUR WORKSPACE</div><h1>Overview</h1><p className="intro">A quick view of your private demo session.</p><div className="metrics"><Metric label="Demo session" value="Active" detail={`Expires ${new Date(snapshot.session.expires_at).toLocaleString()}`} /><Metric label="Payout record" value={snapshot.payout?.status ?? 'Not started'} detail="Your session only" /><Metric label="Open incident" value={snapshot.incident?.status === 'open' ? '1' : '0'} detail="In this workspace" /></div><div className="feature-card"><div><div className="eyebrow">NEXT STEP</div><h2>Explore the Incident Lab</h2><p>Follow the demo journey and inspect the state attached to this session.</p></div><button className="primary" onClick={() => setView('lab')}>Open Incident Lab ↗</button></div></section>
-          : <section className="page"><div className="eyebrow">DEMO WORKSPACE / INCIDENT LAB</div><h1>Incident Lab</h1><p className="intro">Your isolated space for a payout recovery walkthrough.</p><div className="lab-layout"><div className="lab-main"><div className="panel"><div className="panel-header"><div><span className="eyebrow">CURRENT SESSION</span><h2>Ready to investigate</h2></div><span className="status">Active</span></div><p>This workspace is linked to session <code>{snapshot.session.id}</code>. Its payout and incident data belong only to this browser session.</p><div className="session-meta"><div><small>Started</small><strong>{new Date(snapshot.session.created_at).toLocaleString()}</strong></div><div><small>Expires</small><strong>{new Date(snapshot.session.expires_at).toLocaleString()}</strong></div></div></div><PayoutPanel payout={payout} creating={creatingPayout} checking={checkingPayout} pollingPaused={pollingPaused} stateUnverified={payoutStateUnverified} dailyLimitReached={dailyLimitReached} error={error} onCreate={startPayout} onVerify={verifyPayoutState} onCheck={checkPayout} />{snapshot.incident && payout && <><IncidentEvidence payout={payout} incident={snapshot.incident} events={snapshot.events} /><InvestigationPanel incident={snapshot.incident} result={investigation?.incident_id === snapshot.incident.id ? investigation : null} loading={investigating} error={investigationError} onInvestigate={investigate} approving={approving} approvalError={approvalError} onApprove={approveCorrection} /></>}<div className="panel"><span className="eyebrow">JOURNEY</span><h2>Recovery workflow</h2><Step number="01" title="Start a private session" detail="Your workspace is ready." done /><Step number="02" title="Observe a Sandbox payout" detail={payout ? `PayPal item: ${payout.provider_status ?? 'awaiting status'}` : 'Create a payout to observe its PayPal item.'} done={!!payout?.item_id && payout.provider_status === 'SUCCESS'} /><Step number="03" title="Detect a discrepancy" detail={snapshot.incident ? `Injected fault opened incident ${snapshot.incident.id.slice(0, 8)}.` : 'Reconciliation and evidence appear here when an incident is detected.'} done={!!snapshot.incident} /><Step number="04" title="Investigate" detail={investigation ? 'Structured diagnosis and evidence are ready for review.' : 'Start an AI investigation when the incident appears.'} done={!!investigation} /></div></div><aside className="lab-aside"><div className="panel"><span className="eyebrow">SESSION STATE</span><h2>At a glance</h2><State label="Payout record" value={payout?.status ?? 'None yet'} /><State label="Provider item" value={snapshot.payout?.provider_status ?? '—'} /><State label="Incident" value={snapshot.incident?.status ?? 'None'} /><State label="Events" value={String(snapshot.events.length)} /></div><div className="aside-note">ⓘ &nbsp;PayPal credentials stay on the server. This browser receives only its own session state.</div></aside></div></section>}
+          : <section className="page"><div className="eyebrow">DEMO WORKSPACE / INCIDENT LAB</div><h1>Incident Lab</h1><p className="intro">Your isolated space for a payout recovery walkthrough.</p><div className="lab-layout"><div className="lab-main"><div className="panel"><div className="panel-header"><div><span className="eyebrow">CURRENT SESSION</span><h2>Ready to investigate</h2></div><span className="status">Active</span></div><p>This workspace is linked to session <code>{snapshot.session.id}</code>. Its payout and incident data belong only to this browser session.</p><div className="session-meta"><div><small>Started</small><strong>{new Date(snapshot.session.created_at).toLocaleString()}</strong></div><div><small>Expires</small><strong>{new Date(snapshot.session.expires_at).toLocaleString()}</strong></div></div></div><PayoutPanel payout={payout} creating={creatingPayout} checking={checkingPayout} pollingPaused={pollingPaused} stateUnverified={payoutStateUnverified} dailyLimitReached={dailyLimitReached} now={now} switchingBackup={switchingBackup} error={error} onCreate={startPayout} onVerify={verifyPayoutState} onCheck={checkPayout} onBackup={switchToBackup} />{snapshot.incident && payout && <><IncidentEvidence payout={payout} incident={snapshot.incident} events={snapshot.events} /><InvestigationPanel incident={snapshot.incident} result={investigation?.incident_id === snapshot.incident.id ? investigation : null} loading={investigating} error={investigationError} onInvestigate={investigate} approving={approving} approvalError={approvalError} onApprove={approveCorrection} /></>}<div className="panel"><span className="eyebrow">JOURNEY</span><h2>Recovery workflow</h2><Step number="01" title="Start a private session" detail="Your workspace is ready." done /><Step number="02" title="Observe a Sandbox payout" detail={payout ? `PayPal item: ${payout.provider_status ?? 'awaiting status'}` : 'Create a payout to observe its PayPal item.'} done={!!payout?.item_id && payout.provider_status === 'SUCCESS'} /><Step number="03" title="Detect a discrepancy" detail={snapshot.incident ? `Injected fault opened incident ${snapshot.incident.id.slice(0, 8)}.` : 'Reconciliation and evidence appear here when an incident is detected.'} done={!!snapshot.incident} /><Step number="04" title="Investigate" detail={investigation ? 'Structured diagnosis and evidence are ready for review.' : 'Start an AI investigation when the incident appears.'} done={!!investigation} /></div></div><aside className="lab-aside"><div className="panel"><span className="eyebrow">SESSION STATE</span><h2>At a glance</h2><State label="Payout record" value={payout?.status ?? 'None yet'} /><State label="Provider item" value={snapshot.payout?.provider_status ?? '—'} /><State label="Incident" value={snapshot.incident?.status ?? 'None'} /><State label="Events" value={String(snapshot.events.length)} /></div><div className="aside-note">ⓘ &nbsp;PayPal credentials stay on the server. This browser receives only its own session state.</div></aside></div></section>}
       </main>
     </div>
   </div>
@@ -261,19 +290,23 @@ export function InvestigationPanel({ incident, result, loading, error, onInvesti
   </div>
 }
 
-function PayoutPanel({ payout, creating, checking, pollingPaused, stateUnverified, dailyLimitReached, error, onCreate, onVerify, onCheck }: {
+export function PayoutPanel({ payout, creating, checking, pollingPaused, stateUnverified, dailyLimitReached, now, switchingBackup, error, onCreate, onVerify, onCheck, onBackup }: {
   payout?: Payout
   creating: boolean
   checking: boolean
   pollingPaused: boolean
   stateUnverified: boolean
   dailyLimitReached: boolean
+  now: number
+  switchingBackup: boolean
   error: string
   onCreate: () => void
   onVerify: () => void
   onCheck: () => void
+  onBackup: () => void
 }) {
   const pending = payout?.status === 'pending' && (!payout.provider_status || payout.provider_status === 'PENDING')
+  const backupAvailable = dailyLimitReached || (!!payout && payout.origin === 'live' && payout.provider_status !== 'SUCCESS' && now - new Date(payout.created_at).getTime() >= 30_000)
   return <div className="panel payout-panel">
     <span className="eyebrow">PAYPAL SANDBOX</span>
     <h2>Observe a payout item</h2>
@@ -285,13 +318,14 @@ function PayoutPanel({ payout, creating, checking, pollingPaused, stateUnverifie
         </button>}
       {creating && <p role="status">Waiting for PayPal item evidence, up to 25 seconds…</p>}
     </> : <>
+      {payout.origin === 'precreated' && <p className="injected-note">Pre-created Sandbox payout. This session has its own payout record and incident; the PayPal item was created earlier.</p>}
       <p>{payout.status === 'provider_unknown'
         ? 'PayPal creation could not be confirmed. Keep this creation key for investigation; this session will not create another payout.'
         : payout.status === 'creating' ? 'The payout request is in progress. Waiting for its batch reference.'
           : pending ? 'Waiting for the specific PayPal payout item. This may take a few moments.'
             : 'The provider item result is shown below.'}</p>
       <div className="payout-details">
-        <State label="Creation key" value={payout.creation_key} />
+        <State label={payout.origin === 'precreated' ? 'Original creation key' : 'Creation key'} value={payout.creation_key} />
         <State label="Batch ID" value={payout.batch_id ?? 'Awaiting batch'} />
         <State label="Payout item ID" value={payout.item_id ?? 'Awaiting item'} />
         <State label="Payout item status" value={payout.provider_status ?? 'Awaiting item'} />
@@ -300,6 +334,10 @@ function PayoutPanel({ payout, creating, checking, pollingPaused, stateUnverifie
       {checking && <p role="status">Checking the payout item…</p>}
       {pollingPaused && <button className="secondary" onClick={onCheck} disabled={checking}>Check payout item again</button>}
     </>}
+    {backupAvailable && <div className="backup-option">
+      <p>{dailyLimitReached ? 'The public daily creation limit has been reached.' : 'This live payout has not reached item-level SUCCESS within 30 seconds.'} Use a previously completed Sandbox payout to continue the incident journey. This opens a new demo session; your current payout record stays with this session.</p>
+      <button className="secondary" onClick={onBackup} disabled={switchingBackup}>{switchingBackup ? 'Opening backup…' : 'Use pre-created Sandbox payout'}</button>
+    </div>}
     {error && <p className="error" role="alert">{error}</p>}
   </div>
 }

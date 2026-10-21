@@ -40,6 +40,23 @@ func (s *memoryStore) CreateSession(_ context.Context, hash []byte, expiresAt ti
 	return session, nil
 }
 
+func (s *memoryStore) CreateBackupSession(ctx context.Context, hash []byte, expiresAt time.Time, evidence recoveryuc.BackupEvidence) (recovery.Session, error) {
+	session, err := s.CreateSession(ctx, hash, expiresAt)
+	if err != nil {
+		return recovery.Session{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	payout := recovery.Payout{ID: "payout-" + session.ID, SessionID: session.ID, CreationKey: evidence.CreationKey,
+		SenderItemID: evidence.SenderItemID, BatchID: evidence.BatchID, ItemID: evidence.ItemID,
+		ProviderStatus: "SUCCESS", Status: "pending", Scenario: recovery.ScenarioMissedUpdate, Origin: "precreated"}
+	s.payouts[session.ID] = payout
+	s.items[payout.ID] = recovery.Incident{ID: "incident-" + session.ID, PayoutID: payout.ID, Status: "open"}
+	s.events[session.ID] = []recovery.Event{{Source: "system", Kind: "precreated_payout_attached"},
+		{Source: "paypal", Kind: "item_observed"}, {Source: "injected", Kind: "internal_update_skipped"}}
+	return session, nil
+}
+
 func (s *memoryStore) Snapshot(_ context.Context, hash []byte) (recovery.Snapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -96,7 +113,7 @@ func (s *memoryStore) ReservePayout(_ context.Context, sessionID, scenario strin
 		return payout, false, nil
 	}
 	payout := recovery.Payout{ID: "payout-" + sessionID, SessionID: sessionID,
-		CreationKey: "recoveryos-" + sessionID, SenderItemID: "item-" + sessionID, Status: "creating", Scenario: scenario}
+		CreationKey: "recoveryos-" + sessionID, SenderItemID: "item-" + sessionID, Status: "creating", Scenario: scenario, Origin: "live", CreatedAt: time.Now()}
 	s.payouts[sessionID] = payout
 	return payout, true, nil
 }
@@ -402,5 +419,48 @@ func TestMismatchedProviderItemCannotOpenIncident(t *testing.T) {
 	_, snapshot, _ := request(t, server, http.MethodGet, "/api/sessions/current", cookie)
 	if snapshot.Incident != nil || snapshot.Payout == nil || snapshot.Payout.Status != "pending" {
 		t.Fatal("mismatched item changed payout or incident")
+	}
+}
+
+func TestBackupPayoutUsesVerifiedEvidenceInIsolatedSessions(t *testing.T) {
+	provider := &fakeProvider{statuses: []string{"SUCCESS"}}
+	store := newMemoryStore()
+	service := recoveryuc.NewService(store, provider, 0, 0).WithBackup(recoveryuc.BackupEvidence{
+		CreationKey: "existing-key", SenderItemID: "item-a", BatchID: "existing-batch", ItemID: "provider-item-1",
+	})
+	handler := recoveryhandler.New(service, false, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	mux := http.NewServeMux()
+	handler.Register(mux)
+	_, original, originalCookie := request(t, mux, http.MethodPost, "/api/sessions", nil)
+	_, first, firstCookie := request(t, mux, http.MethodPost, "/api/sessions/backup", originalCookie)
+	_, second, secondCookie := request(t, mux, http.MethodPost, "/api/sessions/backup", originalCookie)
+	if firstCookie == nil || secondCookie == nil || first.Session.ID == second.Session.ID || first.Session.ID == original.Session.ID ||
+		first.Payout == nil || second.Payout == nil || first.Payout.ID == second.Payout.ID || first.Incident == nil || second.Incident == nil ||
+		first.Incident.ID == second.Incident.ID || first.Payout.Origin != "precreated" || first.Payout.ItemID != second.Payout.ItemID || provider.createCalls != 0 {
+		t.Fatalf("backup did not isolate records or created a payout: first=%+v second=%+v creates=%d", first, second, provider.createCalls)
+	}
+	_, unchanged, _ := request(t, mux, http.MethodGet, "/api/sessions/current", originalCookie)
+	if unchanged.Payout != nil || unchanged.Incident != nil {
+		t.Fatalf("backup changed original session: %+v", unchanged)
+	}
+}
+
+func TestBackupRejectsUnsuccessfulProviderItemWithoutReplacingSession(t *testing.T) {
+	provider := &fakeProvider{statuses: []string{"FAILED"}}
+	store := newMemoryStore()
+	service := recoveryuc.NewService(store, provider, 0, 0).WithBackup(recoveryuc.BackupEvidence{
+		CreationKey: "existing-key", SenderItemID: "item-a", BatchID: "existing-batch", ItemID: "provider-item-1",
+	})
+	handler := recoveryhandler.New(service, false, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	mux := http.NewServeMux()
+	handler.Register(mux)
+	_, original, cookie := request(t, mux, http.MethodPost, "/api/sessions", nil)
+	status, _, replacement := request(t, mux, http.MethodPost, "/api/sessions/backup", cookie)
+	if status != http.StatusServiceUnavailable || replacement != nil || provider.createCalls != 0 {
+		t.Fatalf("unverified backup was accepted: status=%d cookie=%+v calls=%d", status, replacement, provider.createCalls)
+	}
+	_, current, _ := request(t, mux, http.MethodGet, "/api/sessions/current", cookie)
+	if current.Session.ID != original.Session.ID || current.Payout != nil {
+		t.Fatalf("failed backup replaced session: %+v", current)
 	}
 }

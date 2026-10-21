@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/KushnerykPavel/recoveryos/api/internal/service/paypal"
+	recoveryuc "github.com/KushnerykPavel/recoveryos/api/internal/usecase/recovery"
 )
 
 type Config struct {
@@ -16,6 +17,7 @@ type Config struct {
 	DatabaseURL      string
 	CookieSecure     bool
 	DailyPayoutLimit int
+	BackupPayout     recoveryuc.BackupEvidence
 	PollInterval     time.Duration
 	WaitTimeout      time.Duration
 	PayPal           paypal.Config
@@ -31,6 +33,12 @@ func LoadConfig() (Config, error) {
 		WaitTimeout:  25 * time.Second,
 		OpenAIKey:    os.Getenv("OPENAI_API_KEY"),
 		OpenAIModel:  envDefault("OPENAI_MODEL", "gpt-6-luna"),
+		BackupPayout: recoveryuc.BackupEvidence{
+			CreationKey:  envDefault("BACKUP_PAYOUT_CREATION_KEY", "recoveryos-smoke-fac4d1e716ad506a5435ee0c6efabad5"),
+			SenderItemID: envDefault("BACKUP_PAYOUT_SENDER_ITEM_ID", "smoke-fac4d1e716ad506a5435ee0c6efabad5"),
+			BatchID:      envDefault("BACKUP_PAYOUT_BATCH_ID", "J2B2LJ6B7ECT8"),
+			ItemID:       envDefault("BACKUP_PAYOUT_ITEM_ID", "KDWNH6JFYC2W2"),
+		},
 		PayPal: paypal.Config{
 			BaseURL:      "https://api-m.sandbox.paypal.com",
 			ClientID:     os.Getenv("PAYPAL_CLIENT_ID"),

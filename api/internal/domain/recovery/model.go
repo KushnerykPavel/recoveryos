@@ -25,6 +25,7 @@ type Payout struct {
 	ProviderStatus string    `json:"provider_status,omitempty"`
 	Status         string    `json:"status"`
 	Scenario       string    `json:"scenario"`
+	Origin         string    `json:"origin"`
 	CreatedAt      time.Time `json:"created_at"`
 }
 

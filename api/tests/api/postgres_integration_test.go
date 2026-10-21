@@ -170,6 +170,38 @@ func TestPostgresRecoveryWorkflow(t *testing.T) {
 	}
 }
 
+func TestPostgresBackupBypassesDailyCreationLimitWithIsolatedRecords(t *testing.T) {
+	db := postgresTestPool(t)
+	provider := &fakeProvider{statuses: []string{"SUCCESS"}}
+	service := recoveryuc.NewService(postgres.New(db, 1), provider, 0, 0).WithBackup(recoveryuc.BackupEvidence{
+		CreationKey: "precreated-key", SenderItemID: "item-a", BatchID: "precreated-batch", ItemID: "provider-item-1",
+	})
+	handler := recoveryhandler.New(service, false, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	mux := http.NewServeMux()
+	handler.Register(mux)
+	_, _, firstCookie := request(t, mux, http.MethodPost, "/api/sessions", nil)
+	_, _, secondCookie := request(t, mux, http.MethodPost, "/api/sessions", nil)
+	_, _, _ = request(t, mux, http.MethodPost, "/api/payouts", firstCookie)
+	status, _, _ := request(t, mux, http.MethodPost, "/api/payouts", secondCookie)
+	if status != http.StatusTooManyRequests {
+		t.Fatalf("daily limit returned %d", status)
+	}
+	_, first, firstBackupCookie := request(t, mux, http.MethodPost, "/api/sessions/backup", secondCookie)
+	_, second, secondBackupCookie := request(t, mux, http.MethodPost, "/api/sessions/backup", secondCookie)
+	if firstBackupCookie == nil || secondBackupCookie == nil || first.Payout == nil || second.Payout == nil ||
+		first.Incident == nil || second.Incident == nil || first.Payout.ID == second.Payout.ID ||
+		first.Incident.ID == second.Incident.ID || first.Payout.ItemID != second.Payout.ItemID || provider.createCalls != 1 {
+		t.Fatalf("backups were not isolated or another payout was created: first=%+v second=%+v calls=%d", first, second, provider.createCalls)
+	}
+	var count int
+	if err := db.QueryRow(t.Context(), `SELECT count FROM daily_payout_counts LIMIT 1`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("backup consumed daily creation quota: %d", count)
+	}
+}
+
 func TestPostgresPayoutItemOutcomes(t *testing.T) {
 	cases := []struct {
 		name         string

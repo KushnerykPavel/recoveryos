@@ -4,9 +4,9 @@
 
 **Blocked by:** 03: Detect an injected payout discrepancy.
 
-**Status:** ready-for-agent
+**Status:** done.
 
-- [ ] A live item that has not reached `SUCCESS` within 25–30 seconds offers the clearly labeled backup path.
-- [ ] A configurable global daily creation limit prevents new payouts and offers the backup path without blocking the visitor.
-- [ ] Each backup session has its own payout record and incident even when provider evidence is reused.
-- [ ] Switching to backup never initiates another payout or presents a pre-created item as newly created.
+- [x] A live item that has not reached `SUCCESS` within 25–30 seconds offers the clearly labeled backup path.
+- [x] A configurable global daily creation limit prevents new payouts and offers the backup path without blocking the visitor.
+- [x] Each backup session has its own payout record and incident even when provider evidence is reused.
+- [x] Switching to backup never initiates another payout or presents a pre-created item as newly created.

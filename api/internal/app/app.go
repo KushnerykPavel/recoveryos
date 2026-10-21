@@ -30,7 +30,7 @@ func Run(ctx context.Context, config Config, logger *slog.Logger) error {
 
 	store := postgres.New(db, config.DailyPayoutLimit)
 	provider := paypal.New(config.PayPal, nil)
-	service := recoveryuc.NewService(store, provider, config.PollInterval, config.WaitTimeout)
+	service := recoveryuc.NewService(store, provider, config.PollInterval, config.WaitTimeout).WithBackup(config.BackupPayout)
 	investigator := investigation.New(service, provider, openai.New(config.OpenAIKey, config.OpenAIModel, nil), store)
 	handler := recoveryhandler.New(service, config.CookieSecure, logger).WithInvestigator(investigator)
 	server := &http.Server{

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/KushnerykPavel/recoveryos/api/internal/domain/recovery"
 	"github.com/KushnerykPavel/recoveryos/api/internal/usecase/investigation"
@@ -16,6 +17,7 @@ const sessionCookie = "recoveryos_session"
 
 type service interface {
 	CreateSession(ctx context.Context) (recovery.Snapshot, string, error)
+	CreateBackupSession(ctx context.Context) (recovery.Snapshot, string, error)
 	Snapshot(ctx context.Context, token string) (recovery.Snapshot, error)
 	CreatePayout(ctx context.Context, token, scenario string) (recovery.Snapshot, error)
 	Reconcile(ctx context.Context, token string) (recovery.Snapshot, error)
@@ -45,6 +47,7 @@ func New(service service, secureCookie bool, logger *slog.Logger) *Handler {
 
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/sessions", h.createSession)
+	mux.HandleFunc("POST /api/sessions/backup", h.createBackupSession)
 	mux.HandleFunc("GET /api/sessions/current", h.snapshot)
 	mux.HandleFunc("POST /api/payouts", h.createPayout)
 	mux.HandleFunc("POST /api/payouts/reconcile", h.reconcile)
@@ -84,11 +87,29 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, err)
 		return
 	}
+	h.setSessionCookie(w, token, snapshot.Session.ExpiresAt)
+	writeJSON(w, http.StatusCreated, snapshot)
+}
+
+func (h *Handler) createBackupSession(w http.ResponseWriter, r *http.Request) {
+	if _, err := h.service.Snapshot(r.Context(), cookieToken(r)); err != nil {
+		h.fail(w, err)
+		return
+	}
+	snapshot, token, err := h.service.CreateBackupSession(r.Context())
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	h.setSessionCookie(w, token, snapshot.Session.ExpiresAt)
+	writeJSON(w, http.StatusCreated, snapshot)
+}
+
+func (h *Handler) setSessionCookie(w http.ResponseWriter, token string, expiresAt time.Time) {
 	http.SetCookie(w, &http.Cookie{
-		Name: sessionCookie, Value: token, Path: "/", Expires: snapshot.Session.ExpiresAt,
+		Name: sessionCookie, Value: token, Path: "/", Expires: expiresAt,
 		HttpOnly: true, Secure: h.secureCookie, SameSite: http.SameSiteLaxMode,
 	})
-	writeJSON(w, http.StatusCreated, snapshot)
 }
 
 func (h *Handler) snapshot(w http.ResponseWriter, r *http.Request) {
@@ -146,6 +167,10 @@ func (h *Handler) fail(w http.ResponseWriter, err error) {
 	}
 	if errors.Is(err, recoveryuc.ErrDailyLimit) {
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "daily payout creation limit reached"})
+		return
+	}
+	if errors.Is(err, recoveryuc.ErrBackupUnavailable) {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
 		return
 	}
 	if errors.Is(err, recoveryuc.ErrInvalidScenario) {
