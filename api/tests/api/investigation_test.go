@@ -17,7 +17,7 @@ import (
 	recoveryuc "github.com/KushnerykPavel/recoveryos/api/internal/usecase/recovery"
 )
 
-func investigationServer(t *testing.T, proposedAction, itemStatus string) (http.Handler, *fakeProvider, *int) {
+func investigationServer(t *testing.T, proposedAction, itemStatus, modelFailure string) (http.Handler, *fakeProvider, *int) {
 	t.Helper()
 	fixture, err := os.ReadFile("../../../client/test/fixtures/investigation.json")
 	if err != nil {
@@ -52,6 +52,15 @@ func investigationServer(t *testing.T, proposedAction, itemStatus string) (http.
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
+		if modelFailure == "unavailable" {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = io.WriteString(w, `{"error":"model unavailable"}`)
+			return
+		}
+		if modelFailure == "invalid" {
+			_, _ = io.WriteString(w, `{"status":"incomplete","output":[]}`)
+			return
+		}
 		if callCount == 1 {
 			_, _ = io.WriteString(w, `{"status":"completed","output":[`+
 				`{"type":"function_call","name":"read_incident","call_id":"a","arguments":"{}"},`+
@@ -136,7 +145,7 @@ func investigateRequest(t *testing.T, server http.Handler, cookie *http.Cookie) 
 }
 
 func TestIncidentInvestigationShowsCitedDiagnosisWithoutChangingPayout(t *testing.T) {
-	server, provider, calls := investigationServer(t, "correct_payout_record", "SUCCESS")
+	server, provider, calls := investigationServer(t, "correct_payout_record", "SUCCESS", "")
 	_, _, cookie := request(t, server, http.MethodPost, "/api/sessions", nil)
 	_, started, _ := requestWithScenario(t, server, http.MethodPost, "/api/payouts", cookie, "missed-update")
 	status, result := investigateRequest(t, server, cookie)
@@ -150,17 +159,39 @@ func TestIncidentInvestigationShowsCitedDiagnosisWithoutChangingPayout(t *testin
 }
 
 func TestInvestigationRejectsUnsupportedCorrectionAndOtherSession(t *testing.T) {
-	server, _, calls := investigationServer(t, "correct_payout_record", "FAILED")
+	server, _, calls := investigationServer(t, "correct_payout_record", "FAILED", "")
 	_, _, owner := request(t, server, http.MethodPost, "/api/sessions", nil)
 	_, _, other := request(t, server, http.MethodPost, "/api/sessions", nil)
 	_, _, _ = requestWithScenario(t, server, http.MethodPost, "/api/payouts", owner, "missed-update")
 	if status, _ := investigateRequest(t, server, other); status != http.StatusConflict {
 		t.Fatal("another session investigated the incident")
 	}
-	if status, _ := investigateRequest(t, server, owner); status != http.StatusBadGateway {
-		t.Fatalf("unsafe correction returned %d", status)
+	if status, result := investigateRequest(t, server, owner); status != http.StatusOK || result.Origin != "deterministic_fallback" || result.ProposedAction != "no_change" {
+		t.Fatalf("unsafe correction was not downgraded: status=%d result=%+v", status, result)
 	}
 	if *calls != 2 {
 		t.Fatal(fmt.Sprintf("unexpected model calls: %d", *calls))
+	}
+}
+
+func TestModelFailureProducesAuditedDeterministicDiagnosis(t *testing.T) {
+	for _, failure := range []string{"unavailable", "invalid"} {
+		t.Run(failure, func(t *testing.T) {
+			server, provider, calls := investigationServer(t, "correct_payout_record", "SUCCESS", failure)
+			_, _, cookie := request(t, server, http.MethodPost, "/api/sessions", nil)
+			_, started, _ := requestWithScenario(t, server, http.MethodPost, "/api/payouts", cookie, "missed-update")
+			status, result := investigateRequest(t, server, cookie)
+			if status != http.StatusOK || result.Origin != "deterministic_fallback" || result.ProposedAction != "correct_payout_record" || result.IncidentID != started.Incident.ID || result.ItemID != started.Payout.ItemID || len(result.Evidence) != 4 {
+				t.Fatalf("fallback diagnosis missing: status=%d result=%+v", status, result)
+			}
+			_, after, _ := request(t, server, http.MethodGet, "/api/sessions/current", cookie)
+			if after.Investigation == nil || after.Investigation.Origin != "deterministic_fallback" || after.Payout.Status != "pending" || provider.createCalls != 1 || *calls != 1 {
+				t.Fatalf("fallback changed payout or was not saved: %+v", after)
+			}
+			last := after.Events[len(after.Events)-1]
+			if last.Kind != "investigation_completed" || last.Details != "Diagnosis mode: deterministic_fallback" {
+				t.Fatalf("diagnosis mode missing from audit event: %+v", last)
+			}
+		})
 	}
 }

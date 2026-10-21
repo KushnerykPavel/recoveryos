@@ -100,7 +100,12 @@ func (s *Store) SaveInvestigation(ctx context.Context, sessionID, incidentID str
 	if err != nil {
 		return err
 	}
-	command, err := s.db.Exec(ctx, `
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	command, err := tx.Exec(ctx, `
 		INSERT INTO investigations (session_id, incident_id, result)
 		SELECT i.session_id, i.id, $3 FROM incidents i
 		WHERE i.id = $2 AND i.session_id = $1 AND i.status = 'open'`, sessionID, incidentID, string(encoded))
@@ -110,7 +115,17 @@ func (s *Store) SaveInvestigation(ctx context.Context, sessionID, incidentID str
 	if command.RowsAffected() != 1 {
 		return errors.New("incident is no longer open")
 	}
-	return nil
+	command, err = tx.Exec(ctx, `
+		INSERT INTO payout_events (session_id, payout_id, source, kind, details)
+		SELECT i.session_id, i.payout_id, 'system', 'investigation_completed', $3
+		FROM incidents i WHERE i.id = $2 AND i.session_id = $1`, sessionID, incidentID, "Diagnosis mode: "+result.Origin)
+	if err != nil {
+		return err
+	}
+	if command.RowsAffected() != 1 {
+		return errors.New("investigation audit event was not recorded")
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Store) ReservePayout(ctx context.Context, sessionID, scenario string) (recovery.Payout, bool, error) {

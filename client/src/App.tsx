@@ -5,7 +5,7 @@ type Payout = { id: string; creation_key: string; batch_id?: string; item_id?: s
 type Incident = { id: string; status: string }
 type Event = { id: number; source: string; kind: string; details: string; occurred_at: string }
 type Snapshot = { session: Session; payout?: Payout; incident?: Incident; investigation?: Investigation; events: Event[] }
-type Investigation = { incident_id: string; item_id: string; item_status: string; diagnosis: string; proposed_action: 'correct_payout_record' | 'no_change'; evidence: { source: 'provider' | 'internal' | 'injected' | 'policy'; reference: string; finding: string }[]; origin: 'ai' }
+type Investigation = { incident_id: string; item_id: string; item_status: string; diagnosis: string; proposed_action: 'correct_payout_record' | 'no_change'; evidence: { source: 'provider' | 'internal' | 'injected' | 'policy'; reference: string; finding: string }[]; origin: 'ai' | 'deterministic_fallback' }
 type View = 'overview' | 'lab'
 
 async function getSnapshot(path: string, method: 'GET' | 'POST' = 'GET', headers?: HeadersInit): Promise<Snapshot | null> {
@@ -155,6 +155,11 @@ export function App() {
         throw new Error(body.error || `Investigation failed (${response.status})`)
       }
       setInvestigation(await response.json() as Investigation)
+      try {
+        setSnapshot(await getSnapshot('/api/sessions/current'))
+      } catch {
+        // The diagnosis is still available even if refreshing the event history fails.
+      }
     } catch (cause) {
       setInvestigationError(cause instanceof Error ? cause.message : 'Investigation unavailable')
     } finally {
@@ -211,14 +216,15 @@ function IncidentEvidence({ payout, incident, events }: { payout: Payout; incide
 export function InvestigationPanel({ incident, result, loading, error, onInvestigate }: { incident: Incident; result: Investigation | null; loading: boolean; error: string; onInvestigate: () => void }) {
   const labels = { provider: 'PayPal provider', internal: 'Internal record', injected: 'Injected event', policy: 'Recovery policy' }
   return <div className="panel investigation-panel">
-    <span className="eyebrow">AI INVESTIGATION · {incident.id.slice(0, 8)}</span>
+    <span className="eyebrow">INCIDENT INVESTIGATION · {incident.id.slice(0, 8)}</span>
     <h2>Investigate the discrepancy</h2>
-    <p>Read-only AI analysis uses the incident, payout record, current PayPal item, event history, and recovery policy.</p>
+    <p>The read-only investigation uses the incident, payout record, current PayPal item, event history, and recovery policy.</p>
     <button className="primary" onClick={onInvestigate} disabled={loading}>{loading ? 'Investigating…' : result ? 'Run investigation again' : 'Start AI investigation ↗'}</button>
     {loading && <p role="status">Reading evidence and preparing a diagnosis…</p>}
     {error && <p className="error" role="alert">{error}</p>}
     {result && <div className="investigation-result">
-      <span className="status">AI diagnosis</span>
+      <span className="status">{result.origin === 'ai' ? 'AI diagnosis' : 'Deterministic fallback diagnosis'}</span>
+      {result.origin === 'deterministic_fallback' && <p>AI analysis was unavailable or invalid. This diagnosis uses verified evidence and fixed recovery rules.</p>}
       <State label="Incident" value={result.incident_id} />
       <State label="PayPal item" value={`${result.item_id} · ${result.item_status}`} />
       <h3>Diagnosis</h3><p>{result.diagnosis}</p>

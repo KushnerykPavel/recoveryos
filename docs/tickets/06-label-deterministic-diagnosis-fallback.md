@@ -4,9 +4,9 @@
 
 **Blocked by:** 05: Investigate an incident with GPT-6 Luna.
 
-**Status:** ready-for-agent
+**Status:** complete
 
-- [ ] An unavailable or invalid LLM response activates a clearly labeled deterministic diagnosis.
-- [ ] The fallback presents the same evidence and proposed-action shape needed for review and policy evaluation.
-- [ ] The UI and audit history record which diagnosis mode was used.
-- [ ] The fallback cannot grant broader recovery permission than a valid AI diagnosis.
+- [x] An unavailable or invalid LLM response activates a clearly labeled deterministic diagnosis.
+- [x] The fallback presents the same evidence and proposed-action shape needed for review and policy evaluation.
+- [x] The UI and audit history record which diagnosis mode was used.
+- [x] The fallback cannot grant broader recovery permission than a valid AI diagnosis.

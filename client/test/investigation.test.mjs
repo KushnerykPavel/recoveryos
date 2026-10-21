@@ -25,3 +25,14 @@ test('Incident Lab shows the diagnosis, proposal, and provenance of cited eviden
     assert.ok(markup.includes(visible), `missing visible evidence: ${visible}`)
   }
 })
+
+test('Incident Lab labels a deterministic diagnosis as a fallback', () => {
+  const markup = renderToStaticMarkup(React.createElement(InvestigationPanel, {
+    incident: { id: scriptedDiagnosis.incident_id, status: 'open' },
+    result: { ...scriptedDiagnosis, origin: 'deterministic_fallback' },
+    loading: false, error: '', onInvestigate() {},
+  }))
+  assert.ok(markup.includes('Deterministic fallback diagnosis'))
+  assert.ok(markup.includes('AI analysis was unavailable or invalid'))
+  assert.ok(!markup.includes('>AI diagnosis<'))
+})

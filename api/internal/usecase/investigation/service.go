@@ -113,6 +113,24 @@ func (s *Service) Investigate(ctx context.Context, token string) (Result, error)
 	if item.ID != payout.ItemID || item.BatchID != payout.BatchID || item.SenderItemID != payout.SenderItemID || item.ID == "" {
 		return Result{}, fmt.Errorf("PayPal item identity mismatch: %w", ErrInvalidDiagnosis)
 	}
+	result, err := s.investigateWithModel(ctx, snapshot, item)
+	if err != nil {
+		if ctx.Err() != nil {
+			return Result{}, ctx.Err()
+		}
+		result = deterministicDiagnosis(snapshot, item)
+	}
+	if err := validate(result, snapshot, item); err != nil {
+		return Result{}, err
+	}
+	if err := s.store.SaveInvestigation(ctx, snapshot.Session.ID, snapshot.Incident.ID, result); err != nil {
+		return Result{}, fmt.Errorf("save investigation: %w", err)
+	}
+	return result, nil
+}
+
+func (s *Service) investigateWithModel(ctx context.Context, snapshot recovery.Snapshot, item recoveryuc.Item) (Result, error) {
+	payout := *snapshot.Payout
 	evidence := map[string]struct {
 		Reference string
 		Data      any
@@ -172,9 +190,6 @@ func (s *Service) Investigate(ctx context.Context, token string) (Result, error)
 						return Result{}, err
 					}
 					result.Origin = "ai"
-					if err := s.store.SaveInvestigation(ctx, snapshot.Session.ID, snapshot.Incident.ID, result); err != nil {
-						return Result{}, fmt.Errorf("save investigation: %w", err)
-					}
 					return result, nil
 				}
 			}
@@ -184,6 +199,31 @@ func (s *Service) Investigate(ctx context.Context, token string) (Result, error)
 		}
 	}
 	return Result{}, ErrInvalidDiagnosis
+}
+
+func deterministicDiagnosis(snapshot recovery.Snapshot, item recoveryuc.Item) Result {
+	payout := snapshot.Payout
+	result := Result{
+		IncidentID: snapshot.Incident.ID, ItemID: item.ID, ItemStatus: item.Status,
+		ProposedAction: "no_change", Origin: "deterministic_fallback",
+		Diagnosis: "A deterministic review found insufficient evidence to propose a payout record correction.",
+		Evidence: []recovery.Evidence{
+			{Source: "provider", Reference: item.ID, Finding: "PayPal payout item status: " + item.Status},
+			{Source: "internal", Reference: payout.ID, Finding: "Internal payout record status: " + payout.Status},
+			{Source: "policy", Reference: "record-correction-policy", Finding: policy},
+		},
+	}
+	for _, event := range snapshot.Events {
+		if event.Source == "injected" {
+			result.Evidence = append(result.Evidence, recovery.Evidence{Source: "injected", Reference: fmt.Sprint(event.ID), Finding: "Injected event: " + event.Kind + ". " + event.Details})
+			if item.Status == "SUCCESS" && payout.Status == "pending" {
+				result.ProposedAction = "correct_payout_record"
+				result.Diagnosis = "PayPal confirms SUCCESS for this item while the payout record remains pending after an injected missed update."
+			}
+			break
+		}
+	}
+	return result
 }
 
 func eventEvidence(events []recovery.Event) []map[string]any {

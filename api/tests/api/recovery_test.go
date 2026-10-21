@@ -68,6 +68,10 @@ func (s *memoryStore) SaveInvestigation(_ context.Context, sessionID, incidentID
 		return errors.New("incident is no longer open")
 	}
 	s.investigations[sessionID] = result
+	s.events[sessionID] = append(s.events[sessionID], recovery.Event{
+		ID: int64(len(s.events[sessionID]) + 1), Source: "system", Kind: "investigation_completed",
+		Details: "Diagnosis mode: " + result.Origin, OccurredAt: time.Now(),
+	})
 	return nil
 }
 
