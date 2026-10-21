@@ -13,6 +13,11 @@ import (
 
 var ErrNoIncident = errors.New("no open incident in this session")
 var ErrInvalidDiagnosis = errors.New("invalid investigation result")
+var ErrCorrectionPending = errors.New("record correction is not yet available")
+
+type ApprovalRejected struct{ Reason string }
+
+func (e *ApprovalRejected) Error() string { return e.Reason }
 
 type SnapshotReader interface {
 	Snapshot(context.Context, string) (recovery.Snapshot, error)
@@ -56,6 +61,7 @@ type Result = recovery.Investigation
 
 type Store interface {
 	SaveInvestigation(context.Context, string, string, Result) error
+	RecordRejectedApproval(context.Context, string, string, string) error
 }
 
 type Service struct {
@@ -67,6 +73,51 @@ type Service struct {
 
 func New(snapshots SnapshotReader, payouts PayoutReader, model Model, store Store) *Service {
 	return &Service{snapshots: snapshots, payouts: payouts, model: model, store: store}
+}
+
+// Approve checks the latest provider evidence before a record correction may
+// be committed. The correction itself is introduced by the next workflow step.
+func (s *Service) Approve(ctx context.Context, token, incidentID string) error {
+	snapshot, err := s.snapshots.Snapshot(ctx, token)
+	if err != nil {
+		return err
+	}
+	reject := func(reason string) error {
+		payoutID := ""
+		if snapshot.Payout != nil {
+			payoutID = snapshot.Payout.ID
+		}
+		if err := s.store.RecordRejectedApproval(ctx, snapshot.Session.ID, payoutID, reason); err != nil {
+			return fmt.Errorf("record rejected approval: %w", err)
+		}
+		return &ApprovalRejected{Reason: reason}
+	}
+	if snapshot.Incident == nil || snapshot.Incident.ID != incidentID || snapshot.Incident.Status != "open" || snapshot.Payout == nil || snapshot.Incident.PayoutID != snapshot.Payout.ID {
+		return reject("incident does not belong to this session or is no longer open")
+	}
+	payout := snapshot.Payout
+	if payout.SessionID != snapshot.Session.ID || payout.Status != "pending" || payout.BatchID == "" || payout.ItemID == "" || payout.SenderItemID == "" || payout.ProviderStatus != "SUCCESS" {
+		return reject("payout record is no longer stale or lacks verified item evidence")
+	}
+	proposal := snapshot.Investigation
+	if proposal == nil || proposal.ProposedAction != "correct_payout_record" || (proposal.Origin != "ai" && proposal.Origin != "deterministic_fallback") ||
+		validate(*proposal, snapshot, recoveryuc.Item{ID: payout.ItemID, BatchID: payout.BatchID, SenderItemID: payout.SenderItemID, Status: payout.ProviderStatus}) != nil {
+		return reject("unsupported or malformed record correction recommendation")
+	}
+	item, err := s.payouts.GetBatchItem(ctx, payout.BatchID)
+	if err != nil {
+		return reject("PayPal payout item is unavailable for fresh verification")
+	}
+	if item.ID != payout.ItemID || item.BatchID != payout.BatchID || item.SenderItemID != payout.SenderItemID || item.ID == "" {
+		return reject("PayPal payout item identity does not match the payout record")
+	}
+	if item.Status != "SUCCESS" {
+		if item.Status == "" {
+			return reject("PayPal payout item status is unknown")
+		}
+		return reject("PayPal payout item is " + item.Status + ", not SUCCESS")
+	}
+	return ErrCorrectionPending
 }
 
 const policy = "Correct only the internal payout record after a fresh exact-item PayPal SUCCESS verification, session ownership and still-stale record checks. Never create or retry a payout. No manual override."

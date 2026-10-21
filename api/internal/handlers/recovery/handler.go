@@ -25,6 +25,7 @@ type Handler struct {
 	service      service
 	investigator interface {
 		Investigate(context.Context, string) (investigation.Result, error)
+		Approve(context.Context, string, string) error
 	}
 	secureCookie bool
 	logger       *slog.Logger
@@ -32,6 +33,7 @@ type Handler struct {
 
 func (h *Handler) WithInvestigator(investigator interface {
 	Investigate(context.Context, string) (investigation.Result, error)
+	Approve(context.Context, string, string) error
 }) *Handler {
 	h.investigator = investigator
 	return h
@@ -48,7 +50,23 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/payouts/reconcile", h.reconcile)
 	if h.investigator != nil {
 		mux.HandleFunc("POST /api/incidents/investigate", h.investigate)
+		mux.HandleFunc("POST /api/incidents/approve", h.approve)
 	}
+}
+
+func (h *Handler) approve(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		IncidentID string `json:"incident_id"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&input); err != nil || input.IncidentID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "incident_id is required"})
+		return
+	}
+	if err := h.investigator.Approve(r.Context(), cookieToken(r), input.IncidentID); err != nil {
+		h.fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) investigate(w http.ResponseWriter, r *http.Request) {
@@ -110,6 +128,14 @@ func (h *Handler) reconcile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) fail(w http.ResponseWriter, err error) {
+	if rejected, ok := errors.AsType[*investigation.ApprovalRejected](err); ok {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": rejected.Reason})
+		return
+	}
+	if errors.Is(err, investigation.ErrCorrectionPending) {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": err.Error()})
+		return
+	}
 	if errors.Is(err, investigation.ErrNoIncident) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "no open incident in this session"})
 		return

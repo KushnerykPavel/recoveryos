@@ -107,8 +107,10 @@ If creation times out or its result is ambiguous, the record becomes
 `provider_unknown` and the API does not issue a second create request. The
 configurable `DAILY_PAYOUT_LIMIT` also caps fresh payouts across sessions.
 
-The pre-created payout fallback, operator approval, and record correction
-belong to later roadmap stages.
+`POST /api/incidents/approve` rechecks the exact PayPal payout item and
+records rejected correction attempts in the session event history. A verified
+proposal does not yet change the payout record. The pre-created payout fallback
+and atomic record correction belong to later roadmap stages.
 
 ## Verification
 

@@ -17,7 +17,7 @@ import (
 	recoveryuc "github.com/KushnerykPavel/recoveryos/api/internal/usecase/recovery"
 )
 
-func investigationServer(t *testing.T, proposedAction, itemStatus, modelFailure string) (http.Handler, *fakeProvider, *int) {
+func investigationServer(t *testing.T, proposedAction, itemStatus, modelFailure string) (http.Handler, *fakeProvider, *int, *memoryStore) {
 	t.Helper()
 	fixture, err := os.ReadFile("../../../client/test/fixtures/investigation.json")
 	if err != nil {
@@ -124,7 +124,7 @@ func investigationServer(t *testing.T, proposedAction, itemStatus, modelFailure 
 	handler := recoveryhandler.New(service, false, slog.New(slog.NewTextHandler(io.Discard, nil))).WithInvestigator(inv)
 	mux := http.NewServeMux()
 	handler.Register(mux)
-	return mux, provider, &callCount
+	return mux, provider, &callCount, store
 }
 
 func investigateRequest(t *testing.T, server http.Handler, cookie *http.Cookie) (int, investigation.Result) {
@@ -145,7 +145,7 @@ func investigateRequest(t *testing.T, server http.Handler, cookie *http.Cookie) 
 }
 
 func TestIncidentInvestigationShowsCitedDiagnosisWithoutChangingPayout(t *testing.T) {
-	server, provider, calls := investigationServer(t, "correct_payout_record", "SUCCESS", "")
+	server, provider, calls, _ := investigationServer(t, "correct_payout_record", "SUCCESS", "")
 	_, _, cookie := request(t, server, http.MethodPost, "/api/sessions", nil)
 	_, started, _ := requestWithScenario(t, server, http.MethodPost, "/api/payouts", cookie, "missed-update")
 	status, result := investigateRequest(t, server, cookie)
@@ -159,7 +159,7 @@ func TestIncidentInvestigationShowsCitedDiagnosisWithoutChangingPayout(t *testin
 }
 
 func TestInvestigationRejectsUnsupportedCorrectionAndOtherSession(t *testing.T) {
-	server, _, calls := investigationServer(t, "correct_payout_record", "FAILED", "")
+	server, _, calls, _ := investigationServer(t, "correct_payout_record", "FAILED", "")
 	_, _, owner := request(t, server, http.MethodPost, "/api/sessions", nil)
 	_, _, other := request(t, server, http.MethodPost, "/api/sessions", nil)
 	_, _, _ = requestWithScenario(t, server, http.MethodPost, "/api/payouts", owner, "missed-update")
@@ -177,7 +177,7 @@ func TestInvestigationRejectsUnsupportedCorrectionAndOtherSession(t *testing.T) 
 func TestModelFailureProducesAuditedDeterministicDiagnosis(t *testing.T) {
 	for _, failure := range []string{"unavailable", "invalid"} {
 		t.Run(failure, func(t *testing.T) {
-			server, provider, calls := investigationServer(t, "correct_payout_record", "SUCCESS", failure)
+			server, provider, calls, _ := investigationServer(t, "correct_payout_record", "SUCCESS", failure)
 			_, _, cookie := request(t, server, http.MethodPost, "/api/sessions", nil)
 			_, started, _ := requestWithScenario(t, server, http.MethodPost, "/api/payouts", cookie, "missed-update")
 			status, result := investigateRequest(t, server, cookie)

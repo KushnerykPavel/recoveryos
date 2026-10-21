@@ -20,8 +20,29 @@ import (
 	recoveryhandler "github.com/KushnerykPavel/recoveryos/api/internal/handlers/recovery"
 	"github.com/KushnerykPavel/recoveryos/api/internal/repo/postgres"
 	"github.com/KushnerykPavel/recoveryos/api/internal/service/paypal"
+	"github.com/KushnerykPavel/recoveryos/api/internal/usecase/investigation"
 	recoveryuc "github.com/KushnerykPavel/recoveryos/api/internal/usecase/recovery"
 )
+
+func TestPostgresWrongSessionApprovalIsRecordedWithoutPayout(t *testing.T) {
+	db := postgresTestPool(t)
+	store := postgres.New(db, 1)
+	provider := &fakeProvider{statuses: []string{"SUCCESS"}}
+	service := recoveryuc.NewService(store, provider, 0, 0)
+	investigator := investigation.New(service, provider, nil, store)
+	handler := recoveryhandler.New(service, false, slog.New(slog.NewTextHandler(io.Discard, nil))).WithInvestigator(investigator)
+	mux := http.NewServeMux()
+	handler.Register(mux)
+	_, _, cookie := request(t, mux, http.MethodPost, "/api/sessions", nil)
+	status, reason := approvalRequest(t, mux, cookie, "00000000-0000-0000-0000-000000000000")
+	if status != http.StatusConflict || !strings.Contains(reason, "session") {
+		t.Fatalf("wrong-session approval: %d %q", status, reason)
+	}
+	_, snapshot, _ := request(t, mux, http.MethodGet, "/api/sessions/current", cookie)
+	if snapshot.Payout != nil || len(snapshot.Events) != 1 || snapshot.Events[0].Kind != "record_correction_rejected" {
+		t.Fatalf("session audit event missing: %+v", snapshot)
+	}
+}
 
 type scriptedTransport func(*http.Request) (*http.Response, error)
 

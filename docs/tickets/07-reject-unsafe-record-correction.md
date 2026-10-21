@@ -4,10 +4,12 @@
 
 **Blocked by:** 05: Investigate an incident with GPT-6 Luna.
 
-**Status:** ready-for-agent
+**Status:** complete
 
-- [ ] Approval performs a fresh item-level PayPal read rather than trusting the investigation snapshot or batch status.
-- [ ] `PENDING`, `FAILED`, `UNCLAIMED`, unknown, mismatched, and unavailable item results all reject correction.
-- [ ] An unsupported or malformed recommendation, wrong session, or no-longer-stale payout record also rejects correction.
-- [ ] The operator sees the rejection reason; the event history records the attempt without altering the payout record.
-- [ ] No approval path invokes payout creation or retry.
+- [x] Approval performs a fresh item-level PayPal read rather than trusting the investigation snapshot or batch status.
+- [x] `PENDING`, `FAILED`, `UNCLAIMED`, unknown, mismatched, and unavailable item results all reject correction.
+- [x] An unsupported or malformed recommendation, wrong session, or no-longer-stale payout record also rejects correction.
+- [x] The operator sees the rejection reason; the event history records the attempt without altering the payout record.
+- [x] No approval path invokes payout creation or retry.
+
+Valid proposals receive a not-yet-available response until ticket 08 adds the atomic record correction.

@@ -75,6 +75,20 @@ func (s *memoryStore) SaveInvestigation(_ context.Context, sessionID, incidentID
 	return nil
 }
 
+func (s *memoryStore) RecordRejectedApproval(_ context.Context, sessionID, payoutID, reason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	payout, ok := s.payouts[sessionID]
+	if payoutID != "" && (!ok || payout.ID != payoutID) {
+		return errors.New("payout record does not belong to session")
+	}
+	s.events[sessionID] = append(s.events[sessionID], recovery.Event{
+		ID: int64(len(s.events[sessionID]) + 1), Source: "system", Kind: "record_correction_rejected",
+		Details: reason, OccurredAt: time.Now(),
+	})
+	return nil
+}
+
 func (s *memoryStore) ReservePayout(_ context.Context, sessionID, scenario string) (recovery.Payout, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -160,6 +174,7 @@ type fakeProvider struct {
 	mu           sync.Mutex
 	createCalls  int
 	createError  error
+	readError    error
 	statuses     []string
 	mismatchItem bool
 }
@@ -177,6 +192,9 @@ func (p *fakeProvider) CreatePayout(_ context.Context, _, _ string) (recoveryuc.
 func (p *fakeProvider) GetBatchItem(_ context.Context, batchID string) (recoveryuc.Item, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.readError != nil {
+		return recoveryuc.Item{}, p.readError
+	}
 	status := p.statuses[0]
 	if len(p.statuses) > 1 {
 		p.statuses = p.statuses[1:]

@@ -80,7 +80,11 @@ func (s *Store) Snapshot(ctx context.Context, tokenHash []byte) (recovery.Snapsh
 
 	rows, err := s.db.Query(ctx, `
 		SELECT id, source, kind, details, occurred_at FROM payout_events
-		WHERE session_id = $1 ORDER BY id`, snapshot.Session.ID)
+		WHERE session_id = $1
+		UNION ALL
+		SELECT -id, source, kind, details, occurred_at FROM session_events
+		WHERE session_id = $1
+		ORDER BY occurred_at, id`, snapshot.Session.ID)
 	if err != nil {
 		return recovery.Snapshot{}, err
 	}
@@ -126,6 +130,33 @@ func (s *Store) SaveInvestigation(ctx context.Context, sessionID, incidentID str
 		return errors.New("investigation audit event was not recorded")
 	}
 	return tx.Commit(ctx)
+}
+
+func (s *Store) RecordRejectedApproval(ctx context.Context, sessionID, payoutID, reason string) error {
+	if payoutID == "" {
+		command, err := s.db.Exec(ctx, `
+			INSERT INTO session_events (session_id, source, kind, details)
+			SELECT id, 'system', 'record_correction_rejected', $2
+			FROM sessions WHERE id = $1 AND expires_at > now()`, sessionID, reason)
+		if err != nil {
+			return err
+		}
+		if command.RowsAffected() != 1 {
+			return errors.New("session not found")
+		}
+		return nil
+	}
+	command, err := s.db.Exec(ctx, `
+		INSERT INTO payout_events (session_id, payout_id, source, kind, details)
+		SELECT session_id, id, 'system', 'record_correction_rejected', $3
+		FROM payout_records WHERE session_id = $1 AND id = $2`, sessionID, payoutID, reason)
+	if err != nil {
+		return err
+	}
+	if command.RowsAffected() != 1 {
+		return errors.New("payout record does not belong to session")
+	}
+	return nil
 }
 
 func (s *Store) ReservePayout(ctx context.Context, sessionID, scenario string) (recovery.Payout, bool, error) {

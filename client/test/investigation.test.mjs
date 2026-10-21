@@ -36,3 +36,14 @@ test('Incident Lab labels a deterministic diagnosis as a fallback', () => {
   assert.ok(markup.includes('AI analysis was unavailable or invalid'))
   assert.ok(!markup.includes('>AI diagnosis<'))
 })
+
+test('Incident Lab shows why a proposed correction was rejected', () => {
+  const markup = renderToStaticMarkup(React.createElement(InvestigationPanel, {
+    incident: { id: scriptedDiagnosis.incident_id, status: 'open' },
+    result: scriptedDiagnosis,
+    loading: false, error: '', onInvestigate() {},
+    approving: false, approvalError: 'PayPal payout item is FAILED, not SUCCESS', onApprove() {},
+  }))
+  assert.ok(markup.includes('Approve record correction'))
+  assert.ok(markup.includes('PayPal payout item is FAILED, not SUCCESS'))
+})
