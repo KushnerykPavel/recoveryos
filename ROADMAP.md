@@ -19,6 +19,8 @@ The backup journey uses a pre-created genuine Sandbox payout when a new item has
 | **7–9 Nov** | 9 h | Run end-to-end rehearsals, fix blockers, publish English README and setup instructions, add an open-source license, and produce a public YouTube video under three minutes. If and only if P0 passes its gate, use remaining time for a real webhook with signature verification. | Hosted demo, repository, documentation, and video are ready for submission. |
 | **10–11 Nov** | 6 h | Test the public link and clean-room setup instructions; verify repository visibility, license, video, and submission fields; submit by 11 Nov. | Submission complete with one day of schedule buffer. |
 
+**19–21 October gate update:** PayPal Sandbox item verification and timing are done (18.355 seconds to item-level `SUCCESS`), a successful backup candidate is recorded, and the live-primary/backup decision is made. See [the smoke test report](docs/sandbox-smoke-2026-10-21.md). The other external dependency checks in this gate remain open.
+
 **Total planned effort:** 59 hours. Reallocate time from P1 to any incomplete P0 gate. Keep the hosted demo accessible through the judging period ending 15 December 2026.
 
 ## P0 implementation boundaries

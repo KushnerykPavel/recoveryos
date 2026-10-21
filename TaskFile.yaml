@@ -39,3 +39,10 @@ tasks:
     dir: api
     cmds:
       - go test ./...
+
+  paypal:smoke:
+    desc: Create one Sandbox payout and measure item-level success
+    dir: api
+    dotenv: [.env]
+    cmds:
+      - go run ./cmd/paypal-smoke

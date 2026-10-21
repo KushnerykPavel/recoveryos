@@ -24,10 +24,24 @@ task app:up
 curl -i http://127.0.0.1:8080/readyz
 ```
 
-The client placeholder is at `http://127.0.0.1:8080/` by default; Nginx forwards `/api/`
-and health endpoints to the Go API. The `migrate` container applies the schema
-after PostgreSQL becomes healthy and before the API starts. The client folder
-currently contains a placeholder page; the planned React UI will replace it.
+The React client is at `http://127.0.0.1:8080/` by default. Nginx forwards
+`/api/` and health endpoints to the Go API. The `migrate` container applies
+the schema after PostgreSQL becomes healthy and before the API starts. A clean
+browser can start a demo session without signing in and enter Incident Lab.
+The session token stays in an HTTP-only cookie; the client receives only that
+session's snapshot.
+
+In Incident Lab, **Create Sandbox payout** starts one genuine payout using the
+`missed-update` scenario so the same session can continue into incident
+detection. The page shows the stable creation key, batch ID, payout item ID,
+and item status separately. It keeps checking while the item is pending and
+restores the session's payout state after a reload. An uncertain creation keeps
+its original key visible and offers no second create action. A daily creation
+limit is shown in the page; the pre-created payout fallback is a later slice.
+
+For client development, run `npm ci` and `npm run dev` from `client/` while the
+Go API is listening on `127.0.0.1:8080`. Vite proxies `/api/` to the API.
+For a production client build, run `npm run build` in `client/`.
 
 The root `.env` sets `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, and the
 host ports `POSTGRES_PORT`, `API_PORT`, `CLIENT_PORT`, and `NGINX_PORT` for
@@ -102,8 +116,29 @@ scripted provider, plus the PayPal adapter with an in-process HTTP transport.
 A real PayPal Sandbox smoke test requires Sandbox credentials and is a separate
 manual step; this API is restricted to Sandbox.
 
+Run the repeatable Sandbox check from the repository root after filling
+`api/.env`:
+
+```sh
+task paypal:smoke
+```
+
+The command creates one payout, polls the specific payout item for up to two
+minutes, and records its ID, status, and time to `SUCCESS` in
+`api/.local/paypal-smoke.json`. This private file is ignored by Git and can
+serve as the source of a pre-created Sandbox item for the future backup flow.
+Running the command again with the same file only resumes observation or
+reports the existing result. If creation was interrupted before its batch ID
+was saved, the command stops rather than risking another payout. Inspect the
+PayPal Sandbox account before starting a separate run with a new evidence file.
+
+The first live result and the decision it supports are in
+[`docs/sandbox-smoke-2026-10-21.md`](../docs/sandbox-smoke-2026-10-21.md).
+
 To exercise the SQL migration and PostgreSQL workflow, set `TEST_DB_URL` to a
 disposable database whose name ends in `_test`, then run
 `go test ./tests/api -run TestPostgresRecoveryWorkflow -v`. This test clears its
-tables before running. It does not call PayPal; the live Sandbox smoke test is
-a separate manual step with your credentials.
+tables before running. It creates two anonymous sessions over HTTP, checks that
+their identities and state are isolated, and substitutes scripted responses at
+the outbound PayPal boundary. It does not call PayPal; the live Sandbox smoke
+test is a separate manual step with your credentials.
