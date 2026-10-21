@@ -28,8 +28,9 @@ func investigationServer(t *testing.T, proposedAction, itemStatus string) (http.
 			t.Errorf("unexpected OpenAI request: %s %s", r.Method, r.URL.Path)
 		}
 		var body struct {
-			Model string `json:"model"`
-			Tools []struct {
+			Model             string `json:"model"`
+			ParallelToolCalls bool   `json:"parallel_tool_calls"`
+			Tools             []struct {
 				Name string `json:"name"`
 			} `json:"tools"`
 			Input []json.RawMessage `json:"input"`
@@ -37,7 +38,7 @@ func investigationServer(t *testing.T, proposedAction, itemStatus string) (http.
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if body.Model != "scripted-model" || len(body.Tools) != 5 {
+		if body.Model != "scripted-model" || len(body.Tools) != 5 || !body.ParallelToolCalls {
 			t.Errorf("model or tools missing: %+v", body)
 		}
 		for _, tool := range body.Tools {
@@ -51,7 +52,7 @@ func investigationServer(t *testing.T, proposedAction, itemStatus string) (http.
 				`{"type":"function_call","name":"read_incident","call_id":"a","arguments":"{}"},`+
 				`{"type":"function_call","name":"read_payout_record","call_id":"b","arguments":"{}"},`+
 				`{"type":"function_call","name":"read_paypal_payout","call_id":"c","arguments":"{}"},`+
-				`{"type":"function_call","name":"read_payment_events","call_id":"d","arguments":"{}"},`+
+				`{"type":"function_call","name":"read_payout_events","call_id":"d","arguments":"{}"},`+
 				`{"type":"function_call","name":"read_recovery_policy","call_id":"e","arguments":"{}"}]}`)
 			return
 		}

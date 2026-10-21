@@ -208,7 +208,7 @@ function IncidentEvidence({ payout, incident, events }: { payout: Payout; incide
   </div>
 }
 
-function InvestigationPanel({ incident, result, loading, error, onInvestigate }: { incident: Incident; result: Investigation | null; loading: boolean; error: string; onInvestigate: () => void }) {
+export function InvestigationPanel({ incident, result, loading, error, onInvestigate }: { incident: Incident; result: Investigation | null; loading: boolean; error: string; onInvestigate: () => void }) {
   const labels = { provider: 'PayPal provider', internal: 'Internal record', injected: 'Injected event', policy: 'Recovery policy' }
   return <div className="panel investigation-panel">
     <span className="eyebrow">AI INVESTIGATION · {incident.id.slice(0, 8)}</span>

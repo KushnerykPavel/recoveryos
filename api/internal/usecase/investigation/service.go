@@ -37,17 +37,19 @@ type Request struct {
 }
 
 type Response struct {
-	Status string `json:"status"`
-	Output []struct {
-		Type      string `json:"type"`
-		Name      string `json:"name"`
-		CallID    string `json:"call_id"`
-		Arguments string `json:"arguments"`
-		Content   []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-	} `json:"output"`
+	Status string            `json:"status"`
+	Output []json.RawMessage `json:"output"`
+}
+
+type outputItem struct {
+	Type      string `json:"type"`
+	Name      string `json:"name"`
+	CallID    string `json:"call_id"`
+	Arguments string `json:"arguments"`
+	Content   []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	} `json:"content"`
 }
 
 type Result = recovery.Investigation
@@ -69,7 +71,7 @@ func New(snapshots SnapshotReader, payouts PayoutReader, model Model, store Stor
 
 const policy = "Correct only the internal payout record after a fresh exact-item PayPal SUCCESS verification, session ownership and still-stale record checks. Never create or retry a payout. No manual override."
 
-var toolNames = []string{"read_incident", "read_payout_record", "read_paypal_payout", "read_payment_events", "read_recovery_policy"}
+var toolNames = []string{"read_incident", "read_payout_record", "read_paypal_payout", "read_payout_events", "read_recovery_policy"}
 
 func tools() []map[string]any {
 	result := make([]map[string]any, 0, len(toolNames))
@@ -111,17 +113,15 @@ func (s *Service) Investigate(ctx context.Context, token string) (Result, error)
 	if item.ID != payout.ItemID || item.BatchID != payout.BatchID || item.SenderItemID != payout.SenderItemID || item.ID == "" {
 		return Result{}, fmt.Errorf("PayPal item identity mismatch: %w", ErrInvalidDiagnosis)
 	}
-	refs := map[string]string{
-		"read_incident": snapshot.Incident.ID, "read_payout_record": payout.ID,
-		"read_paypal_payout": item.ID, "read_payment_events": snapshot.Incident.ID,
-		"read_recovery_policy": "record-correction-policy",
-	}
-	data := map[string]any{
-		"read_incident":        snapshot.Incident,
-		"read_payout_record":   payout,
-		"read_paypal_payout":   item,
-		"read_payment_events":  eventEvidence(snapshot.Events),
-		"read_recovery_policy": map[string]string{"reference": "record-correction-policy", "rule": policy},
+	evidence := map[string]struct {
+		Reference string
+		Data      any
+	}{
+		"read_incident":        {snapshot.Incident.ID, snapshot.Incident},
+		"read_payout_record":   {payout.ID, payout},
+		"read_paypal_payout":   {item.ID, item},
+		"read_payout_events":   {snapshot.Incident.ID, eventEvidence(snapshot.Events)},
+		"read_recovery_policy": {"record-correction-policy", map[string]string{"reference": "record-correction-policy", "rule": policy}},
 	}
 	input := []any{map[string]any{"role": "user", "content": "Investigate incident " + snapshot.Incident.ID + ". Read all five evidence tools before returning the diagnosis."}}
 	seen := map[string]bool{}
@@ -140,15 +140,22 @@ func (s *Service) Investigate(ctx context.Context, token string) (Result, error)
 		if response.Status != "completed" {
 			return Result{}, ErrInvalidDiagnosis
 		}
+		for _, raw := range response.Output {
+			input = append(input, raw)
+		}
 		calls := 0
-		for _, output := range response.Output {
+		for _, raw := range response.Output {
+			var output outputItem
+			if err := json.Unmarshal(raw, &output); err != nil {
+				return Result{}, ErrInvalidDiagnosis
+			}
 			if output.Type == "function_call" {
-				if _, ok := data[output.Name]; !ok || output.CallID == "" || strings.TrimSpace(output.Arguments) != "{}" {
+				tool, ok := evidence[output.Name]
+				if !ok || output.CallID == "" || strings.TrimSpace(output.Arguments) != "{}" {
 					return Result{}, ErrInvalidDiagnosis
 				}
 				seen[output.Name] = true
-				encoded, _ := json.Marshal(map[string]any{"reference": refs[output.Name], "data": data[output.Name]})
-				input = append(input, map[string]any{"type": "function_call", "name": output.Name, "call_id": output.CallID, "arguments": output.Arguments})
+				encoded, _ := json.Marshal(map[string]any{"reference": tool.Reference, "data": tool.Data})
 				input = append(input, map[string]any{"type": "function_call_output", "call_id": output.CallID, "output": string(encoded)})
 				calls++
 			}

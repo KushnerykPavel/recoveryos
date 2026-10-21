@@ -38,7 +38,7 @@ func (c *Client) Respond(ctx context.Context, input investigation.Request) (inve
 	body, err := json.Marshal(map[string]any{
 		"model": c.Model, "instructions": input.Instructions, "input": input.Input,
 		"tools": input.Tools, "tool_choice": input.ToolChoice, "text": input.Text,
-		"store": false, "parallel_tool_calls": false, "reasoning": map[string]string{"effort": "none"},
+		"store": false, "parallel_tool_calls": true, "reasoning": map[string]string{"effort": "none"},
 	})
 	if err != nil {
 		return investigation.Response{}, err

@@ -37,7 +37,7 @@ func Run(ctx context.Context, config Config, logger *slog.Logger) error {
 		Addr:              config.Address,
 		Handler:           buildRouter(handler, store, logger),
 		ReadHeaderTimeout: 5 * time.Second,
-		WriteTimeout:      40 * time.Second,
+		WriteTimeout:      90 * time.Second,
 	}
 	serverErrors := make(chan error, 1)
 	go func() { serverErrors <- server.ListenAndServe() }()
