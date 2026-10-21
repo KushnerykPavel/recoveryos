@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/KushnerykPavel/recoveryos/api/internal/domain/recovery"
+	"github.com/KushnerykPavel/recoveryos/api/internal/usecase/investigation"
 	recoveryuc "github.com/KushnerykPavel/recoveryos/api/internal/usecase/recovery"
 )
 
@@ -22,8 +23,18 @@ type service interface {
 
 type Handler struct {
 	service      service
+	investigator interface {
+		Investigate(context.Context, string) (investigation.Result, error)
+	}
 	secureCookie bool
 	logger       *slog.Logger
+}
+
+func (h *Handler) WithInvestigator(investigator interface {
+	Investigate(context.Context, string) (investigation.Result, error)
+}) *Handler {
+	h.investigator = investigator
+	return h
 }
 
 func New(service service, secureCookie bool, logger *slog.Logger) *Handler {
@@ -35,6 +46,18 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/sessions/current", h.snapshot)
 	mux.HandleFunc("POST /api/payouts", h.createPayout)
 	mux.HandleFunc("POST /api/payouts/reconcile", h.reconcile)
+	if h.investigator != nil {
+		mux.HandleFunc("POST /api/incidents/investigate", h.investigate)
+	}
+}
+
+func (h *Handler) investigate(w http.ResponseWriter, r *http.Request) {
+	result, err := h.investigator.Investigate(r.Context(), cookieToken(r))
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
@@ -87,6 +110,10 @@ func (h *Handler) reconcile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) fail(w http.ResponseWriter, err error) {
+	if errors.Is(err, investigation.ErrNoIncident) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "no open incident in this session"})
+		return
+	}
 	if errors.Is(err, recoveryuc.ErrSessionNotFound) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "session not found"})
 		return

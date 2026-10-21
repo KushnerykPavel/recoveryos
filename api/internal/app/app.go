@@ -12,7 +12,9 @@ import (
 
 	recoveryhandler "github.com/KushnerykPavel/recoveryos/api/internal/handlers/recovery"
 	"github.com/KushnerykPavel/recoveryos/api/internal/repo/postgres"
+	"github.com/KushnerykPavel/recoveryos/api/internal/service/openai"
 	"github.com/KushnerykPavel/recoveryos/api/internal/service/paypal"
+	"github.com/KushnerykPavel/recoveryos/api/internal/usecase/investigation"
 	recoveryuc "github.com/KushnerykPavel/recoveryos/api/internal/usecase/recovery"
 )
 
@@ -29,7 +31,8 @@ func Run(ctx context.Context, config Config, logger *slog.Logger) error {
 	store := postgres.New(db, config.DailyPayoutLimit)
 	provider := paypal.New(config.PayPal, nil)
 	service := recoveryuc.NewService(store, provider, config.PollInterval, config.WaitTimeout)
-	handler := recoveryhandler.New(service, config.CookieSecure, logger)
+	investigator := investigation.New(service, provider, openai.New(config.OpenAIKey, config.OpenAIModel, nil), store)
+	handler := recoveryhandler.New(service, config.CookieSecure, logger).WithInvestigator(investigator)
 	server := &http.Server{
 		Addr:              config.Address,
 		Handler:           buildRouter(handler, store, logger),

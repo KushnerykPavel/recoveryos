@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -62,6 +63,18 @@ func (s *Store) Snapshot(ctx context.Context, tokenHash []byte) (recovery.Snapsh
 		}
 		if err == nil {
 			snapshot.Incident = &incident
+			var raw []byte
+			err = s.db.QueryRow(ctx, `SELECT result FROM investigations WHERE session_id = $1 AND incident_id = $2 ORDER BY id DESC LIMIT 1`, snapshot.Session.ID, incident.ID).Scan(&raw)
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return recovery.Snapshot{}, err
+			}
+			if err == nil {
+				var result recovery.Investigation
+				if err := json.Unmarshal(raw, &result); err != nil {
+					return recovery.Snapshot{}, err
+				}
+				snapshot.Investigation = &result
+			}
 		}
 	}
 
@@ -80,6 +93,24 @@ func (s *Store) Snapshot(ctx context.Context, tokenHash []byte) (recovery.Snapsh
 		snapshot.Events = append(snapshot.Events, event)
 	}
 	return snapshot, rows.Err()
+}
+
+func (s *Store) SaveInvestigation(ctx context.Context, sessionID, incidentID string, result recovery.Investigation) error {
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	command, err := s.db.Exec(ctx, `
+		INSERT INTO investigations (session_id, incident_id, result)
+		SELECT i.session_id, i.id, $3 FROM incidents i
+		WHERE i.id = $2 AND i.session_id = $1 AND i.status = 'open'`, sessionID, incidentID, string(encoded))
+	if err != nil {
+		return err
+	}
+	if command.RowsAffected() != 1 {
+		return errors.New("incident is no longer open")
+	}
+	return nil
 }
 
 func (s *Store) ReservePayout(ctx context.Context, sessionID, scenario string) (recovery.Payout, bool, error) {

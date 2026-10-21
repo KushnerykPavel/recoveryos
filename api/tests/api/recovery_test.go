@@ -18,17 +18,18 @@ import (
 )
 
 type memoryStore struct {
-	mu            sync.Mutex
-	setBatchError error
-	sessions      map[string]recovery.Session
-	payouts       map[string]recovery.Payout
-	items         map[string]recovery.Incident
-	events        map[string][]recovery.Event
+	mu             sync.Mutex
+	setBatchError  error
+	sessions       map[string]recovery.Session
+	payouts        map[string]recovery.Payout
+	items          map[string]recovery.Incident
+	events         map[string][]recovery.Event
+	investigations map[string]recovery.Investigation
 }
 
 func newMemoryStore() *memoryStore {
 	return &memoryStore{sessions: map[string]recovery.Session{}, payouts: map[string]recovery.Payout{},
-		items: map[string]recovery.Incident{}, events: map[string][]recovery.Event{}}
+		items: map[string]recovery.Incident{}, events: map[string][]recovery.Event{}, investigations: map[string]recovery.Investigation{}}
 }
 
 func (s *memoryStore) CreateSession(_ context.Context, hash []byte, expiresAt time.Time) (recovery.Session, error) {
@@ -51,9 +52,23 @@ func (s *memoryStore) Snapshot(_ context.Context, hash []byte) (recovery.Snapsho
 		snapshot.Payout = &payout
 		if incident, ok := s.items[payout.ID]; ok {
 			snapshot.Incident = &incident
+			if result, ok := s.investigations[session.ID]; ok {
+				snapshot.Investigation = &result
+			}
 		}
 	}
 	return snapshot, nil
+}
+
+func (s *memoryStore) SaveInvestigation(_ context.Context, sessionID, incidentID string, result recovery.Investigation) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	incident, ok := s.items[s.payouts[sessionID].ID]
+	if !ok || incident.ID != incidentID || incident.Status != "open" {
+		return errors.New("incident is no longer open")
+	}
+	s.investigations[sessionID] = result
+	return nil
 }
 
 func (s *memoryStore) ReservePayout(_ context.Context, sessionID, scenario string) (recovery.Payout, bool, error) {

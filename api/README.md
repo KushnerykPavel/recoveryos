@@ -39,6 +39,13 @@ restores the session's payout state after a reload. An uncertain creation keeps
 its original key visible and offers no second create action. A daily creation
 limit is shown in the page; the pre-created payout fallback is a later slice.
 
+Set `OPENAI_API_KEY` in `api/.env` to enable Incident Lab investigations. The
+model defaults to `gpt-6-luna`; `OPENAI_MODEL` overrides it. The key stays on
+the API server. After an incident opens, **Start AI investigation** reads five
+evidence sources and returns a validated diagnosis and proposed record action.
+The latest diagnosis is saved with the visitor's session and appears after a
+reload. This step does not approve or apply the proposal.
+
 For client development, run `npm ci` and `npm run dev` from `client/` while the
 Go API is listening on `127.0.0.1:8080`. Vite proxies `/api/` to the API.
 For a production client build, run `npm run build` in `client/`.
@@ -72,6 +79,7 @@ curl -i -c cookies.txt -X POST http://127.0.0.1:8080/api/sessions
 curl -i -b cookies.txt -X POST http://127.0.0.1:8080/api/payouts
 curl -i -b cookies.txt http://127.0.0.1:8080/api/sessions/current
 curl -i -b cookies.txt -X POST http://127.0.0.1:8080/api/payouts/reconcile
+curl -i -b cookies.txt -X POST http://127.0.0.1:8080/api/incidents/investigate
 ```
 
 To run the missed-update scenario, send a header on the **first** payout
@@ -99,9 +107,8 @@ If creation times out or its result is ambiguous, the record becomes
 `provider_unknown` and the API does not issue a second create request. The
 configurable `DAILY_PAYOUT_LIMIT` also caps fresh payouts across sessions.
 
-This slice does not yet include the pre-created payout fallback, AI
-investigation, operator approval, or incident record correction. Those belong
-to the next roadmap stages.
+The pre-created payout fallback, operator approval, and record correction
+belong to later roadmap stages.
 
 ## Verification
 

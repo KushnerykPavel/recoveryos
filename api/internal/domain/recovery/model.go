@@ -43,9 +43,26 @@ type Event struct {
 	OccurredAt time.Time `json:"occurred_at"`
 }
 
+type Evidence struct {
+	Source    string `json:"source"`
+	Reference string `json:"reference"`
+	Finding   string `json:"finding"`
+}
+
+type Investigation struct {
+	IncidentID     string     `json:"incident_id"`
+	ItemID         string     `json:"item_id"`
+	ItemStatus     string     `json:"item_status"`
+	Diagnosis      string     `json:"diagnosis"`
+	ProposedAction string     `json:"proposed_action"`
+	Evidence       []Evidence `json:"evidence"`
+	Origin         string     `json:"origin"`
+}
+
 type Snapshot struct {
-	Session  Session   `json:"session"`
-	Payout   *Payout   `json:"payout,omitempty"`
-	Incident *Incident `json:"incident,omitempty"`
-	Events   []Event   `json:"events"`
+	Session       Session        `json:"session"`
+	Payout        *Payout        `json:"payout,omitempty"`
+	Incident      *Incident      `json:"incident,omitempty"`
+	Investigation *Investigation `json:"investigation,omitempty"`
+	Events        []Event        `json:"events"`
 }

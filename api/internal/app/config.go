@@ -19,6 +19,8 @@ type Config struct {
 	PollInterval     time.Duration
 	WaitTimeout      time.Duration
 	PayPal           paypal.Config
+	OpenAIKey        string
+	OpenAIModel      string
 }
 
 func LoadConfig() (Config, error) {
@@ -27,6 +29,8 @@ func LoadConfig() (Config, error) {
 		DatabaseURL:  os.Getenv("DB_URL"),
 		PollInterval: time.Second,
 		WaitTimeout:  25 * time.Second,
+		OpenAIKey:    os.Getenv("OPENAI_API_KEY"),
+		OpenAIModel:  envDefault("OPENAI_MODEL", "gpt-6-luna"),
 		PayPal: paypal.Config{
 			BaseURL:      "https://api-m.sandbox.paypal.com",
 			ClientID:     os.Getenv("PAYPAL_CLIENT_ID"),
