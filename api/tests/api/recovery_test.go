@@ -18,11 +18,12 @@ import (
 )
 
 type memoryStore struct {
-	mu       sync.Mutex
-	sessions map[string]recovery.Session
-	payouts  map[string]recovery.Payout
-	items    map[string]recovery.Incident
-	events   map[string][]recovery.Event
+	mu            sync.Mutex
+	setBatchError error
+	sessions      map[string]recovery.Session
+	payouts       map[string]recovery.Payout
+	items         map[string]recovery.Incident
+	events        map[string][]recovery.Event
 }
 
 func newMemoryStore() *memoryStore {
@@ -83,6 +84,9 @@ func (s *memoryStore) MarkCreateUncertain(_ context.Context, payoutID string) er
 func (s *memoryStore) SetBatch(_ context.Context, payoutID, batchID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.setBatchError != nil {
+		return s.setBatchError
+	}
 	for key, payout := range s.payouts {
 		if payout.ID == payoutID {
 			payout.BatchID, payout.Status = batchID, "pending"
@@ -166,11 +170,32 @@ func (p *fakeProvider) GetBatchItem(_ context.Context, batchID string) (recovery
 }
 
 func newServer(provider *fakeProvider) http.Handler {
-	service := recoveryuc.NewService(newMemoryStore(), provider, 0, 0)
+	return newServerWithStore(provider, newMemoryStore())
+}
+
+func newServerWithStore(provider *fakeProvider, store *memoryStore) http.Handler {
+	service := recoveryuc.NewService(store, provider, 0, 0)
 	handler := recoveryhandler.New(service, false, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	mux := http.NewServeMux()
 	handler.Register(mux)
 	return mux
+}
+
+func TestFailedBatchPersistenceLeavesOneUncertainPayout(t *testing.T) {
+	provider := &fakeProvider{statuses: []string{"SUCCESS"}}
+	store := newMemoryStore()
+	store.setBatchError = errors.New("database write failed")
+	server := newServerWithStore(provider, store)
+	_, _, cookie := request(t, server, http.MethodPost, "/api/sessions", nil)
+	status, first, _ := request(t, server, http.MethodPost, "/api/payouts", cookie)
+	if status != http.StatusOK || first.Payout == nil || first.Payout.Status != "provider_unknown" ||
+		first.Payout.CreationKey == "" || first.Payout.BatchID != "" {
+		t.Fatalf("failed batch persistence did not keep an uncertain record: status=%d snapshot=%+v", status, first)
+	}
+	_, again, _ := request(t, server, http.MethodPost, "/api/payouts", cookie)
+	if again.Payout == nil || again.Payout.CreationKey != first.Payout.CreationKey || provider.createCalls != 1 {
+		t.Fatalf("failed batch persistence caused another payout attempt: %+v", again)
+	}
 }
 
 func request(t *testing.T, server http.Handler, method, path string, cookie *http.Cookie) (int, recovery.Snapshot, *http.Cookie) {
@@ -273,12 +298,34 @@ func TestPendingItemNeedsLaterReconciliation(t *testing.T) {
 	server := newServer(provider)
 	_, _, cookie := request(t, server, http.MethodPost, "/api/sessions", nil)
 	_, pending, _ := requestWithScenario(t, server, http.MethodPost, "/api/payouts", cookie, recovery.ScenarioMissedUpdate)
-	if pending.Incident != nil || pending.Payout == nil || pending.Payout.ProviderStatus != "PENDING" {
+	if pending.Incident != nil || pending.Payout == nil || pending.Payout.ProviderStatus != "PENDING" ||
+		pending.Payout.ItemID != "provider-item-1" || pending.Payout.BatchID != "batch-1" ||
+		pending.Payout.CreationKey == "" {
 		t.Fatalf("pending item opened incident: %+v", pending)
 	}
 	_, reconciled, _ := request(t, server, http.MethodPost, "/api/payouts/reconcile", cookie)
-	if reconciled.Incident == nil || provider.createCalls != 1 {
+	if reconciled.Incident == nil || reconciled.Payout == nil || reconciled.Payout.ItemID != pending.Payout.ItemID ||
+		reconciled.Payout.ProviderStatus != "SUCCESS" || provider.createCalls != 1 {
 		t.Fatal("later SUCCESS did not open incident safely")
+	}
+}
+
+func TestNonSuccessItemIsShownWithoutClaimingCompletion(t *testing.T) {
+	for _, itemStatus := range []string{"FAILED", "UNCLAIMED", "UNKNOWN"} {
+		t.Run(itemStatus, func(t *testing.T) {
+			provider := &fakeProvider{statuses: []string{itemStatus}}
+			server := newServer(provider)
+			_, _, cookie := request(t, server, http.MethodPost, "/api/sessions", nil)
+			status, snapshot, _ := requestWithScenario(t, server, http.MethodPost, "/api/payouts", cookie, recovery.ScenarioMissedUpdate)
+			if status != http.StatusOK || snapshot.Payout == nil || snapshot.Payout.ItemID != "provider-item-1" ||
+				snapshot.Payout.ProviderStatus != itemStatus || snapshot.Payout.Status != "pending" || snapshot.Incident != nil {
+				t.Fatalf("non-success item was treated as complete: status=%d snapshot=%+v", status, snapshot)
+			}
+			_, again, _ := request(t, server, http.MethodPost, "/api/payouts", cookie)
+			if again.Payout == nil || again.Payout.CreationKey != snapshot.Payout.CreationKey || provider.createCalls != 1 {
+				t.Fatalf("repeat request changed the payout: %+v", again)
+			}
+		})
 	}
 }
 

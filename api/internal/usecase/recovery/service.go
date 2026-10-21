@@ -120,7 +120,12 @@ func (s *Service) CreatePayout(ctx context.Context, token, requestedScenario str
 			return s.store.Snapshot(persistCtx, TokenHash(token))
 		}
 		if err := s.store.SetBatch(persistCtx, payout.ID, batch.ID); err != nil {
-			return recovery.Snapshot{}, fmt.Errorf("save payout batch: %w", err)
+			// PayPal may have created the payout even though its batch reference
+			// could not be saved. Keep the reserved key and stop new attempts.
+			if markErr := s.store.MarkCreateUncertain(persistCtx, payout.ID); markErr != nil {
+				return recovery.Snapshot{}, fmt.Errorf("save payout batch: %w; record uncertain outcome: %v", err, markErr)
+			}
+			return s.store.Snapshot(persistCtx, TokenHash(token))
 		}
 		payout.BatchID = batch.ID
 	}
