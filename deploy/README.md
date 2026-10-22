@@ -78,6 +78,6 @@ attempt; `OpenAI response received` reports the response status and output-item
 count for that round. `investigation saved` with `origin=ai` confirms a valid
 AI diagnosis was stored. If the model call fails or the response cannot be
 validated, `AI investigation failed; using deterministic fallback` includes
-the error, followed by `investigation saved` with
+the HTTP status and OpenAI `error.code` when available, followed by `investigation saved` with
 `origin=deterministic_fallback`. The logs omit API keys, prompts, provider
 evidence, and response text.

@@ -55,6 +55,14 @@ func (c *Client) Respond(ctx context.Context, input investigation.Request) (inve
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var failure struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		if json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&failure) == nil && safeErrorCode(failure.Error.Code) {
+			return investigation.Response{}, fmt.Errorf("OpenAI Responses returned HTTP %d (code=%s)", resp.StatusCode, failure.Error.Code)
+		}
 		return investigation.Response{}, fmt.Errorf("OpenAI Responses returned HTTP %d", resp.StatusCode)
 	}
 	var result investigation.Response
@@ -62,4 +70,16 @@ func (c *Client) Respond(ctx context.Context, input investigation.Request) (inve
 		return investigation.Response{}, fmt.Errorf("decode OpenAI Responses result: %w", err)
 	}
 	return result, nil
+}
+
+func safeErrorCode(code string) bool {
+	if code == "" || len(code) > 64 {
+		return false
+	}
+	for _, char := range code {
+		if char != '_' && char != '-' && (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') && (char < '0' || char > '9') {
+			return false
+		}
+	}
+	return true
 }

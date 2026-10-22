@@ -58,6 +58,11 @@ func investigationServer(t *testing.T, proposedAction, itemStatus, modelFailure 
 			_, _ = io.WriteString(w, `{"error":"model unavailable"}`)
 			return
 		}
+		if modelFailure == "quota" {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":{"code":"credit_balance_exhausted","message":"private response text"}}`)
+			return
+		}
 		if modelFailure == "invalid" {
 			_, _ = io.WriteString(w, `{"status":"incomplete","output":[]}`)
 			return
@@ -145,6 +150,7 @@ func TestInvestigationLogsOpenAIOutcome(t *testing.T) {
 		{"success", "", "ai", []string{"AI model call started", "OpenAI response received", `"origin":"ai"`}},
 		{"missing key", "missing_key", "deterministic_fallback", []string{"OpenAI API key is not configured", `"origin":"deterministic_fallback"`}},
 		{"unavailable", "unavailable", "deterministic_fallback", []string{"AI model call started", "OpenAI Responses returned HTTP 503", `"origin":"deterministic_fallback"`}},
+		{"quota", "quota", "deterministic_fallback", []string{"OpenAI Responses returned HTTP 429 (code=credit_balance_exhausted)", `"origin":"deterministic_fallback"`}},
 		{"invalid", "invalid", "deterministic_fallback", []string{"OpenAI response received", `"status":"incomplete"`, "AI investigation failed; using deterministic fallback"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -164,6 +170,9 @@ func TestInvestigationLogsOpenAIOutcome(t *testing.T) {
 			}
 			if strings.Contains(logs.String(), "scripted-key") {
 				t.Fatal("API key appeared in investigation logs")
+			}
+			if strings.Contains(logs.String(), "private response text") {
+				t.Fatal("OpenAI response text appeared in investigation logs")
 			}
 		})
 	}
