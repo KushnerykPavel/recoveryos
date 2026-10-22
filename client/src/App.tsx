@@ -1,4 +1,8 @@
 import { useEffect, useState } from 'react'
+import { AllCommunityModule, ModuleRegistry, themeQuartz, type ColDef } from 'ag-grid-community'
+import { AgGridReact } from 'ag-grid-react'
+
+ModuleRegistry.registerModules([AllCommunityModule])
 
 type Session = { id: string; created_at: string; expires_at: string }
 type Payout = { id: string; creation_key: string; batch_id?: string; item_id?: string; status: string; provider_status?: string; origin: 'live' | 'precreated'; created_at: string }
@@ -7,6 +11,23 @@ type Event = { id: number; source: string; kind: string; details: string; occurr
 type Snapshot = { session: Session; payout?: Payout; incident?: Incident; investigation?: Investigation; events: Event[] }
 type Investigation = { incident_id: string; item_id: string; item_status: string; diagnosis: string; proposed_action: 'correct_payout_record' | 'no_change'; evidence: { source: 'provider' | 'internal' | 'injected' | 'policy'; reference: string; finding: string }[]; origin: 'ai' | 'deterministic_fallback' }
 type View = 'overview' | 'lab'
+
+const eventNames: Record<string, string> = {
+  provider_verification: 'Provider verification', operator_approval: 'Operator approval',
+  record_corrected: 'Record correction', record_correction_rejected: 'Correction rejected',
+  investigation_completed: 'Investigation completed', internal_update_skipped: 'Internal update skipped',
+  item_observed: 'Payout item observed', batch_created: 'Payout batch created',
+  precreated_payout_attached: 'Pre-created payout attached',
+}
+
+function eventPresentation(event: Event) {
+  if (event.source === 'paypal') return { label: 'PayPal response', className: 'grid-provider' }
+  if (event.source === 'injected') return { label: 'Injected fault', className: 'grid-injected' }
+  if (event.kind === 'investigation_completed') return event.details.includes('deterministic_fallback')
+    ? { label: 'Fallback diagnosis', className: 'grid-fallback' }
+    : { label: 'AI conclusion', className: 'grid-conclusion' }
+  return { label: 'RecoveryOS', className: '' }
+}
 
 async function getSnapshot(path: string, method: 'GET' | 'POST' = 'GET', headers?: HeadersInit): Promise<Snapshot | null> {
   const response = await fetch(path, { method, headers, credentials: 'same-origin', cache: 'no-store' })
@@ -228,17 +249,70 @@ export function App() {
     <div className="workspace">
       <aside className="sidebar" aria-label="Main navigation">
         <span className="sidebar-label">WORKSPACE</span>
-        <button className={view === 'overview' ? 'nav active' : 'nav'} onClick={() => setView('overview')}>▦ <span>Overview</span></button>
-        <button className={view === 'lab' ? 'nav active' : 'nav'} onClick={() => setView('lab')}>◇ <span>Incident Lab</span></button>
+        <button aria-label="Overview" className={view === 'overview' ? 'nav active' : 'nav'} onClick={() => setView('overview')}>▦ <span>Overview</span></button>
+        <button aria-label="Incident Lab" className={view === 'lab' ? 'nav active' : 'nav'} onClick={() => setView('lab')}>◇ <span>Incident Lab</span></button>
         <div className="sidebar-bottom">● &nbsp;Demo workspace</div>
       </aside>
       <main className="content">
         {loading ? <p className="loading" role="status">Loading your workspace…</p> : !snapshot ?
           <section className="welcome"><div className="eyebrow">WELCOME TO RECOVERYOS</div><h1>See recovery in action.</h1><p>Start a private demo workspace to explore how an incident moves from detection to a safe resolution.</p><div className="welcome-card"><span className="welcome-icon">◇</span><div><strong>Your own Incident Lab</strong><small>No account or credentials needed. Your session and activity are separate from other visitors.</small></div></div><button className="primary" onClick={startSession} disabled={starting}>{starting ? 'Starting…' : 'Start demo session'} ↗</button>{error && <p className="error" role="alert">{error}</p>}</section>
-          : view === 'overview' ? <section className="page"><div className="eyebrow">YOUR WORKSPACE</div><h1>Overview</h1><p className="intro">A quick view of your private demo session.</p><div className="metrics"><Metric label="Demo session" value="Active" detail={`Expires ${new Date(snapshot.session.expires_at).toLocaleString()}`} /><Metric label="Payout record" value={snapshot.payout?.status ?? 'Not started'} detail="Your session only" /><Metric label="Open incident" value={snapshot.incident?.status === 'open' ? '1' : '0'} detail="In this workspace" /></div><div className="feature-card"><div><div className="eyebrow">NEXT STEP</div><h2>Explore the Incident Lab</h2><p>Follow the demo journey and inspect the state attached to this session.</p></div><button className="primary" onClick={() => setView('lab')}>Open Incident Lab ↗</button></div></section>
-          : <section className="page"><div className="eyebrow">DEMO WORKSPACE / INCIDENT LAB</div><h1>Incident Lab</h1><p className="intro">Your isolated space for a payout recovery walkthrough.</p><div className="lab-layout"><div className="lab-main"><div className="panel"><div className="panel-header"><div><span className="eyebrow">CURRENT SESSION</span><h2>Ready to investigate</h2></div><span className="status">Active</span></div><p>This workspace is linked to session <code>{snapshot.session.id}</code>. Its payout and incident data belong only to this browser session.</p><div className="session-meta"><div><small>Started</small><strong>{new Date(snapshot.session.created_at).toLocaleString()}</strong></div><div><small>Expires</small><strong>{new Date(snapshot.session.expires_at).toLocaleString()}</strong></div></div></div><PayoutPanel payout={payout} creating={creatingPayout} checking={checkingPayout} pollingPaused={pollingPaused} stateUnverified={payoutStateUnverified} dailyLimitReached={dailyLimitReached} now={now} switchingBackup={switchingBackup} error={error} onCreate={startPayout} onVerify={verifyPayoutState} onCheck={checkPayout} onBackup={switchToBackup} />{snapshot.incident && payout && <><IncidentEvidence payout={payout} incident={snapshot.incident} events={snapshot.events} /><InvestigationPanel incident={snapshot.incident} result={investigation?.incident_id === snapshot.incident.id ? investigation : null} loading={investigating} error={investigationError} onInvestigate={investigate} approving={approving} approvalError={approvalError} onApprove={approveCorrection} /></>}<div className="panel"><span className="eyebrow">JOURNEY</span><h2>Recovery workflow</h2><Step number="01" title="Start a private session" detail="Your workspace is ready." done /><Step number="02" title="Observe a Sandbox payout" detail={payout ? `PayPal item: ${payout.provider_status ?? 'awaiting status'}` : 'Create a payout to observe its PayPal item.'} done={!!payout?.item_id && payout.provider_status === 'SUCCESS'} /><Step number="03" title="Detect a discrepancy" detail={snapshot.incident ? `Injected fault opened incident ${snapshot.incident.id.slice(0, 8)}.` : 'Reconciliation and evidence appear here when an incident is detected.'} done={!!snapshot.incident} /><Step number="04" title="Investigate" detail={investigation ? 'Structured diagnosis and evidence are ready for review.' : 'Start an AI investigation when the incident appears.'} done={!!investigation} /></div></div><aside className="lab-aside"><div className="panel"><span className="eyebrow">SESSION STATE</span><h2>At a glance</h2><State label="Payout record" value={payout?.status ?? 'None yet'} /><State label="Provider item" value={snapshot.payout?.provider_status ?? '—'} /><State label="Incident" value={snapshot.incident?.status ?? 'None'} /><State label="Events" value={String(snapshot.events.length)} /></div><div className="aside-note">ⓘ &nbsp;PayPal credentials stay on the server. This browser receives only its own session state.</div></aside></div></section>}
+          : view === 'overview' ? <Overview snapshot={snapshot} onOpen={() => setView('lab')} />
+          : <section className="page">
+            <div className="eyebrow">DEMO WORKSPACE / INCIDENT LAB</div>
+            <h1>Incident Lab</h1>
+            <p className="intro">Follow one payout from PayPal evidence to a verified record correction. Each action and conclusion stays in this session.</p>
+            <div className="lab-layout">
+              <div className="lab-main">
+                <Journey snapshot={snapshot} investigation={investigation} />
+                <PayoutPanel payout={payout} creating={creatingPayout} checking={checkingPayout} pollingPaused={pollingPaused} stateUnverified={payoutStateUnverified} dailyLimitReached={dailyLimitReached} now={now} switchingBackup={switchingBackup} error={error} onCreate={startPayout} onVerify={verifyPayoutState} onCheck={checkPayout} onBackup={switchToBackup} />
+                {snapshot.incident && payout && <>
+                  <IncidentEvidence payout={payout} incident={snapshot.incident} events={snapshot.events} />
+                  <InvestigationPanel incident={snapshot.incident} result={investigation?.incident_id === snapshot.incident.id ? investigation : null} loading={investigating} error={investigationError} onInvestigate={investigate} approving={approving} approvalError={approvalError} onApprove={approveCorrection} />
+                </>}
+                <AuditHistory events={snapshot.events} />
+              </div>
+              <aside className="lab-aside">
+                <div className="panel"><span className="eyebrow">SESSION STATE</span><h2>At a glance</h2><State label="Payout record" value={payout?.status ?? 'None yet'} /><State label="Provider item" value={payout?.provider_status ?? '—'} /><State label="Incident" value={snapshot.incident?.status ?? 'None'} /><State label="Events" value={String(snapshot.events.length)} /></div>
+                <div className="aside-note">ⓘ &nbsp;PayPal credentials stay on the server. This browser receives only its own session state.</div>
+              </aside>
+            </div>
+          </section>}
+
       </main>
     </div>
+  </div>
+}
+
+export function Overview({ snapshot, onOpen }: { snapshot: Snapshot; onOpen: () => void }) {
+  const { payout, incident, investigation } = snapshot
+  const resolved = incident?.status === 'resolved'
+  let next = 'Create a Sandbox payout'
+  if (payout) next = 'Wait for PayPal item evidence'
+  if (incident) next = 'Investigate the discrepancy'
+  if (investigation) next = investigation.proposed_action === 'correct_payout_record' ? 'Review and approve the proposed correction' : 'Review diagnosis and evidence'
+  if (resolved) next = 'Review the result and audit history'
+  return <section className="page">
+    <div className="eyebrow">YOUR WORKSPACE</div><h1>Overview</h1>
+    <p className="intro">One private demo session. The Incident Lab holds the evidence and recovery actions.</p>
+    <div className="metrics">
+      <Metric label="Payout record" value={payout?.status ?? 'Not started'} detail={payout ? (payout.origin === 'precreated' ? 'Pre-created Sandbox payout' : 'Live Sandbox payout') : 'No payout in this session'} />
+      <Metric label="PayPal item" value={payout?.provider_status ?? 'Not observed'} detail={payout?.item_id ?? 'Item-level status'} />
+      <Metric label="Incident" value={incident?.status ?? 'None'} detail={incident ? `Case ${incident.id.slice(0, 8)}` : 'No discrepancy detected'} />
+    </div>
+    <div className="feature-card"><div><div className="eyebrow">NEXT STEP</div><h2>{next}</h2><p>{resolved ? 'Inspect the verified PayPal state, corrected record, and complete event history.' : 'Open Incident Lab to continue the guided recovery journey.'}</p></div><button className="primary" onClick={onOpen}>Open Incident Lab ↗</button></div>
+    {incident && <div className="overview-case"><span className="eyebrow">{resolved ? 'RESOLVED CASE' : 'ACTIVE CASE'}</span><strong>{resolved ? 'Payout record corrected' : 'PayPal payout completed, record still pending'}</strong><span>{payout?.item_id ?? 'Item pending'} · {incident.status}</span><button className="text-action" onClick={onOpen}>View case and evidence →</button></div>}
+    <p className="session-expiry">Session expires {new Date(snapshot.session.expires_at).toLocaleString()}.</p>
+  </section>
+}
+
+export function Journey({ snapshot, investigation }: { snapshot: Snapshot; investigation: Investigation | null }) {
+  const { payout, incident } = snapshot
+  return <div className="panel journey-panel"><span className="eyebrow">GUIDED JOURNEY</span><h2>{incident?.status === 'resolved' ? 'Recovery complete' : 'Follow the discrepancy to resolution'}</h2>
+    <Step number="01" title="Start a private session" detail="Your isolated workspace is ready." done />
+    <Step number="02" title="Observe a Sandbox payout" detail={payout?.item_id ? `PayPal item ${payout.item_id}: ${payout.provider_status ?? 'awaiting status'}` : 'Create a payout and wait for its specific PayPal item.'} done={payout?.provider_status === 'SUCCESS'} />
+    <Step number="03" title="Detect the discrepancy" detail={incident ? 'The injected missed update left the record pending; reconciliation opened this incident.' : 'Detection runs automatically when the PayPal item succeeds.'} done={!!incident} />
+    <Step number="04" title="Investigate and review" detail={investigation ? `${investigation.origin === 'ai' ? 'AI' : 'Deterministic fallback'} diagnosis is ready for your review.` : 'Start the investigation when the incident appears.'} done={!!investigation} />
+    <Step number="05" title={investigation?.proposed_action === 'no_change' ? 'Review the decision' : 'Approve and verify correction'} detail={incident?.status === 'resolved' ? 'A fresh PayPal check confirmed SUCCESS; the record was corrected once.' : investigation?.proposed_action === 'no_change' ? 'No record correction proposed. Review the evidence or run the investigation again.' : 'Approve the proposal to trigger a fresh PayPal check and safe record correction.'} done={incident?.status === 'resolved'} />
   </div>
 }
 
@@ -253,16 +327,27 @@ function State({ label, value }: { label: string; value: string }) {
 }
 
 export function IncidentEvidence({ payout, incident, events }: { payout: Payout; incident: Incident; events: Event[] }) {
+  const verified = events.some(event => event.kind === 'provider_verification')
   return <div className="panel incident-evidence">
     <span className="eyebrow">{incident.status.toUpperCase()} INCIDENT · {incident.id.slice(0, 8)}</span>
     <h2>{incident.status === 'resolved' ? 'Reconciled payout record' : 'PayPal payout completed, internal record pending'}</h2>
     <p>{incident.status === 'resolved' ? 'The payout record now agrees with the verified PayPal item. This incident is resolved.' : 'Reconciliation confirmed the PayPal item succeeded while the payout record still says pending.'}</p>
     <div className="evidence-columns">
-      <div><strong>PayPal item evidence</strong><State label="Item ID" value={payout.item_id ?? '—'} /><State label="Item status" value={payout.provider_status ?? '—'} /></div>
+      <div className="provider-evidence"><span className="event-source paypal">{payout.origin === 'precreated' ? 'Pre-created PayPal Sandbox evidence' : 'Genuine PayPal response'}</span><State label="Item ID" value={payout.item_id ?? '—'} /><State label="Item status" value={payout.provider_status ?? '—'} />{verified && <p>Fresh item verification was recorded at approval.</p>}</div>
       <div><strong>Internal payout record</strong><State label="Record status" value={payout.status} /><p className="injected-note">{incident.status === 'resolved' ? 'The approved correction repaired the deliberately skipped record update.' : 'Injected fault: RecoveryOS deliberately skipped the record update.'}</p></div>
     </div>
-    <h3>Event history</h3>
-    <ol className="event-history">{events.map(event => <li key={event.id}><span className={`event-source ${event.source}`}>{event.source === 'paypal' ? 'PayPal' : event.source === 'injected' ? 'Injected fault' : 'System'}</span><strong>{{ provider_verification: 'Provider verification', operator_approval: 'Operator approval', record_corrected: 'Record correction' }[event.kind] ?? event.kind.replaceAll('_', ' ')}</strong><span>{event.details}</span><time dateTime={event.occurred_at}>{new Date(event.occurred_at).toLocaleString()}</time></li>)}</ol>
+  </div>
+}
+
+export function AuditHistory({ events }: { events: Event[] }) {
+  const columns: ColDef<Event>[] = [
+    { headerName: 'Source', valueGetter: params => params.data ? eventPresentation(params.data).label : '', minWidth: 150, flex: 1, cellClass: params => params.data ? eventPresentation(params.data).className : '' },
+    { headerName: 'Event', valueGetter: params => params.data ? eventNames[params.data.kind] ?? params.data.kind.replaceAll('_', ' ') : '', minWidth: 165, flex: 1 },
+    { headerName: 'Detail', field: 'details', flex: 2, minWidth: 230, wrapText: true, autoHeight: true },
+    { headerName: 'When', valueGetter: params => params.data ? new Date(params.data.occurred_at).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' }) : '', minWidth: 150, flex: 1 },
+  ]
+  return <div className="panel audit-panel"><span className="eyebrow">IMMUTABLE EVENT HISTORY</span><h2>Audit trail</h2><p>PayPal responses, injected faults, conclusions, and operator actions are labeled by source.</p>
+    {events.length ? <div className="audit-grid" role="region" aria-label="Event history"><AgGridReact<Event> rowData={events} columnDefs={columns} theme={themeQuartz} domLayout="autoHeight" defaultColDef={{ sortable: true, resizable: true }} getRowId={params => String(params.data.id)} rowHeight={52} /></div> : <p className="empty-history">Events will appear as the payout journey progresses.</p>}
   </div>
 }
 
@@ -276,7 +361,7 @@ export function InvestigationPanel({ incident, result, loading, error, onInvesti
     {loading && <p role="status">Reading evidence and preparing a diagnosis…</p>}
     {error && <p className="error" role="alert">{error}</p>}
     {result && <div className="investigation-result">
-      <span className="status">{result.origin === 'ai' ? 'AI diagnosis' : 'Deterministic fallback diagnosis'}</span>
+      <span className={result.origin === 'ai' ? 'status diagnosis-ai' : 'status diagnosis-fallback'}>{result.origin === 'ai' ? 'AI diagnosis' : 'Deterministic fallback diagnosis'}</span>
       {result.origin === 'deterministic_fallback' && <p>AI analysis was unavailable or invalid. This diagnosis uses verified evidence and fixed recovery rules.</p>}
       <State label="Incident" value={result.incident_id} />
       <State label="PayPal item" value={`${result.item_id} · ${result.item_status}`} />

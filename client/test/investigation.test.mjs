@@ -12,7 +12,7 @@ const compiled = (await bundle.generate({ format: 'cjs' })).output[0].code
 await bundle.close()
 const module = { exports: {} }
 new Function('require', 'module', 'exports', compiled)(require, module, module.exports)
-const { InvestigationPanel, IncidentEvidence } = module.exports
+const { InvestigationPanel, IncidentEvidence, AuditHistory, Overview, Journey } = module.exports
 const scriptedDiagnosis = JSON.parse(readFileSync(new URL('./fixtures/investigation.json', import.meta.url), 'utf8'))
 
 test('Incident Lab shows the diagnosis, proposal, and provenance of cited evidence', () => {
@@ -48,7 +48,7 @@ test('Incident Lab shows why a proposed correction was rejected', () => {
   assert.ok(markup.includes('PayPal payout item is FAILED, not SUCCESS'))
 })
 
-test('Incident Lab shows a resolved correction and distinct audit actions', () => {
+test('Incident Lab shows a resolved correction and audit history', () => {
   const incident = { id: scriptedDiagnosis.incident_id, status: 'resolved' }
   const investigation = renderToStaticMarkup(React.createElement(InvestigationPanel, {
     incident, result: scriptedDiagnosis, loading: false, error: '', onInvestigate() {}, onApprove() {},
@@ -63,7 +63,42 @@ test('Incident Lab shows a resolved correction and distinct audit actions', () =
       { id: 3, source: 'system', kind: 'record_corrected', details: 'Corrected', occurred_at: '2026-10-21T10:00:02Z' },
     ],
   }))
-  for (const label of ['Provider verification', 'Operator approval', 'Record correction', 'Reconciled payout record']) {
+  for (const label of ['Fresh item verification', 'Reconciled payout record']) {
     assert.ok(evidence.includes(label), `missing ${label}`)
   }
+  const audit = renderToStaticMarkup(React.createElement(AuditHistory, { events: [
+    { id: 1, source: 'paypal', kind: 'provider_verification', details: 'Fresh item', occurred_at: '2026-10-21T10:00:00Z' },
+  ] }))
+  assert.match(audit, /Audit trail/)
+  assert.match(audit, /Event history/)
+})
+
+test('Overview leads to the active incident and journey shows resolution', () => {
+  const snapshot = {
+    session: { id: 'session-1', expires_at: '2026-10-22T10:00:00Z' },
+    payout: { status: 'corrected', provider_status: 'SUCCESS', item_id: 'item-1', origin: 'live' },
+    incident: { id: 'incident-1', status: 'resolved' }, investigation: scriptedDiagnosis, events: [],
+  }
+  const overview = renderToStaticMarkup(React.createElement(Overview, { snapshot, onOpen() {} }))
+  assert.match(overview, /Open Incident Lab/)
+  assert.match(overview, /Payout record corrected/)
+  assert.match(overview, /item-1/)
+  const journey = renderToStaticMarkup(React.createElement(Journey, { snapshot, investigation: scriptedDiagnosis }))
+  assert.match(journey, /Recovery complete/)
+  assert.match(journey, /Approve and verify correction/)
+  assert.match(journey, /fresh PayPal check/i)
+})
+
+test('a no-change diagnosis invites review without implying approval is available', () => {
+  const snapshot = {
+    session: { id: 'session-1', expires_at: '2026-10-22T10:00:00Z' },
+    payout: { status: 'pending', provider_status: 'SUCCESS', item_id: 'item-1', origin: 'live' },
+    incident: { id: 'incident-1', status: 'open' },
+    investigation: { ...scriptedDiagnosis, proposed_action: 'no_change' }, events: [],
+  }
+  const overview = renderToStaticMarkup(React.createElement(Overview, { snapshot, onOpen() {} }))
+  const journey = renderToStaticMarkup(React.createElement(Journey, { snapshot, investigation: snapshot.investigation }))
+  assert.match(overview, /Review diagnosis and evidence/)
+  assert.match(journey, /No record correction proposed/)
+  assert.doesNotMatch(overview + journey, /Approve the proposal|Review and approve/)
 })
