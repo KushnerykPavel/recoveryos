@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,7 +18,7 @@ import (
 	recoveryuc "github.com/KushnerykPavel/recoveryos/api/internal/usecase/recovery"
 )
 
-func investigationServer(t *testing.T, proposedAction, itemStatus, modelFailure string) (http.Handler, *fakeProvider, *int, *memoryStore) {
+func investigationServer(t *testing.T, proposedAction, itemStatus, modelFailure string, loggers ...*slog.Logger) (http.Handler, *fakeProvider, *int, *memoryStore) {
 	t.Helper()
 	fixture, err := os.ReadFile("../../../client/test/fixtures/investigation.json")
 	if err != nil {
@@ -119,12 +120,53 @@ func investigationServer(t *testing.T, proposedAction, itemStatus, modelFailure 
 		apiHandler.ServeHTTP(recorder, request)
 		return recorder.Result(), nil
 	})}
-	model := openai.New("scripted-key", "scripted-model", client)
+	key := "scripted-key"
+	if modelFailure == "missing_key" {
+		key = ""
+	}
+	model := openai.New(key, "scripted-model", client)
 	inv := investigation.New(service, provider, model, store)
+	if len(loggers) > 0 {
+		inv.WithLogger(loggers[0])
+	}
 	handler := recoveryhandler.New(service, false, slog.New(slog.NewTextHandler(io.Discard, nil))).WithInvestigator(inv)
 	mux := http.NewServeMux()
 	handler.Register(mux)
 	return mux, provider, &callCount, store
+}
+
+func TestInvestigationLogsOpenAIOutcome(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		failure  string
+		origin   string
+		contains []string
+	}{
+		{"success", "", "ai", []string{"AI model call started", "OpenAI response received", `"origin":"ai"`}},
+		{"missing key", "missing_key", "deterministic_fallback", []string{"OpenAI API key is not configured", `"origin":"deterministic_fallback"`}},
+		{"unavailable", "unavailable", "deterministic_fallback", []string{"AI model call started", "OpenAI Responses returned HTTP 503", `"origin":"deterministic_fallback"`}},
+		{"invalid", "invalid", "deterministic_fallback", []string{"OpenAI response received", `"status":"incomplete"`, "AI investigation failed; using deterministic fallback"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&logs, nil))
+			server, _, _, _ := investigationServer(t, "correct_payout_record", "SUCCESS", test.failure, logger)
+			_, _, cookie := request(t, server, http.MethodPost, "/api/sessions", nil)
+			_, _, _ = requestWithScenario(t, server, http.MethodPost, "/api/payouts", cookie, "missed-update")
+			status, result := investigateRequest(t, server, cookie)
+			if status != http.StatusOK || result.Origin != test.origin {
+				t.Fatalf("unexpected investigation result: status=%d origin=%s", status, result.Origin)
+			}
+			for _, expected := range test.contains {
+				if !strings.Contains(logs.String(), expected) {
+					t.Errorf("missing log detail %q in %s", expected, logs.String())
+				}
+			}
+			if strings.Contains(logs.String(), "scripted-key") {
+				t.Fatal("API key appeared in investigation logs")
+			}
+		})
+	}
 }
 
 func investigateRequest(t *testing.T, server http.Handler, cookie *http.Cookie) (int, investigation.Result) {

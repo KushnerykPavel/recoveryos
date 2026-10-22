@@ -63,3 +63,21 @@ check only when the cap has already been reached. Each script starts with fresh
 HTTP cookies. The live check creates one genuine Sandbox payout, so run it
 deliberately; the backup and isolation checks only read pre-created provider
 evidence. The 22 October 2026 run and its limits are recorded in ticket 10.
+
+## Diagnose AI investigations
+
+Follow the API logs while clicking **Run investigation** or **Run investigation
+again** in Incident Lab:
+
+```sh
+sudo docker compose -f docker-compose.yaml -f deploy/compose.vps.yaml logs -f --tail=100 api
+```
+
+Each investigation logs its incident ID. `AI model call started` marks an
+attempt; `OpenAI response received` reports the response status and output-item
+count for that round. `investigation saved` with `origin=ai` confirms a valid
+AI diagnosis was stored. If the model call fails or the response cannot be
+validated, `AI investigation failed; using deterministic fallback` includes
+the error, followed by `investigation saved` with
+`origin=deterministic_fallback`. The logs omit API keys, prompts, provider
+evidence, and response text.
