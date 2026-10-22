@@ -16,6 +16,10 @@ var ErrNoIncident = errors.New("no open incident in this session")
 var ErrInvalidDiagnosis = errors.New("invalid investigation result")
 var ErrCorrectionConflict = errors.New("record correction is no longer available")
 
+func invalidDiagnosis(reason string) error {
+	return fmt.Errorf("%w: %s", ErrInvalidDiagnosis, reason)
+}
+
 type ApprovalRejected struct{ Reason string }
 
 func (e *ApprovalRejected) Error() string { return e.Reason }
@@ -233,7 +237,7 @@ func (s *Service) investigateWithModel(ctx context.Context, snapshot recovery.Sn
 		}
 		logger.InfoContext(ctx, "OpenAI response received", "status", response.Status, "output_items", len(response.Output))
 		if response.Status != "completed" {
-			return Result{}, ErrInvalidDiagnosis
+			return Result{}, invalidDiagnosis("response not completed")
 		}
 		for _, raw := range response.Output {
 			input = append(input, raw)
@@ -242,12 +246,12 @@ func (s *Service) investigateWithModel(ctx context.Context, snapshot recovery.Sn
 		for _, raw := range response.Output {
 			var output outputItem
 			if err := json.Unmarshal(raw, &output); err != nil {
-				return Result{}, ErrInvalidDiagnosis
+				return Result{}, invalidDiagnosis("output item is not JSON")
 			}
 			if output.Type == "function_call" {
 				tool, ok := evidence[output.Name]
 				if !ok || output.CallID == "" || strings.TrimSpace(output.Arguments) != "{}" {
-					return Result{}, ErrInvalidDiagnosis
+					return Result{}, invalidDiagnosis("invalid tool call")
 				}
 				seen[output.Name] = true
 				encoded, _ := json.Marshal(map[string]any{"reference": tool.Reference, "data": tool.Data})
@@ -261,7 +265,7 @@ func (s *Service) investigateWithModel(ctx context.Context, snapshot recovery.Sn
 					}
 					var result Result
 					if err := json.Unmarshal([]byte(content.Text), &result); err != nil {
-						return Result{}, ErrInvalidDiagnosis
+						return Result{}, invalidDiagnosis("diagnosis is not JSON")
 					}
 					if err := validate(result, snapshot, item); err != nil {
 						return Result{}, err
@@ -272,10 +276,10 @@ func (s *Service) investigateWithModel(ctx context.Context, snapshot recovery.Sn
 			}
 		}
 		if calls == 0 {
-			return Result{}, ErrInvalidDiagnosis
+			return Result{}, invalidDiagnosis("no diagnosis or tool call in response")
 		}
 	}
-	return Result{}, ErrInvalidDiagnosis
+	return Result{}, invalidDiagnosis("tool call limit reached")
 }
 
 func deterministicDiagnosis(snapshot recovery.Snapshot, item recoveryuc.Item) Result {
@@ -312,14 +316,17 @@ func eventEvidence(events []recovery.Event) []map[string]any {
 }
 
 func validate(result Result, snapshot recovery.Snapshot, item recoveryuc.Item) error {
-	if result.IncidentID != snapshot.Incident.ID || result.ItemID != item.ID || result.ItemStatus != item.Status || strings.TrimSpace(result.Diagnosis) == "" || len(result.Evidence) == 0 {
-		return ErrInvalidDiagnosis
+	if result.IncidentID != snapshot.Incident.ID || result.ItemID != item.ID || result.ItemStatus != item.Status {
+		return invalidDiagnosis("diagnosis identity or item status mismatch")
+	}
+	if strings.TrimSpace(result.Diagnosis) == "" || len(result.Evidence) == 0 {
+		return invalidDiagnosis("diagnosis text or evidence missing")
 	}
 	if result.ProposedAction != "correct_payout_record" && result.ProposedAction != "no_change" {
-		return ErrInvalidDiagnosis
+		return invalidDiagnosis("unsupported proposed action")
 	}
 	if result.ProposedAction == "correct_payout_record" && (item.Status != "SUCCESS" || snapshot.Payout.Status != "pending") {
-		return ErrInvalidDiagnosis
+		return invalidDiagnosis("correction violates payout state policy")
 	}
 	allowed := map[string]map[string]bool{
 		"provider": {item.ID: true}, "internal": {snapshot.Payout.ID: true, snapshot.Incident.ID: true},
@@ -333,15 +340,15 @@ func validate(result Result, snapshot recovery.Snapshot, item recoveryuc.Item) e
 	cited := map[string]bool{}
 	for _, evidence := range result.Evidence {
 		if !allowed[evidence.Source][evidence.Reference] || strings.TrimSpace(evidence.Finding) == "" {
-			return ErrInvalidDiagnosis
+			return invalidDiagnosis("unsupported evidence reference or empty finding")
 		}
 		cited[evidence.Source] = true
 	}
 	if !cited["provider"] || !cited["internal"] || !cited["policy"] {
-		return ErrInvalidDiagnosis
+		return invalidDiagnosis("required evidence source missing")
 	}
 	if result.ProposedAction == "correct_payout_record" && !cited["injected"] {
-		return ErrInvalidDiagnosis
+		return invalidDiagnosis("injected fault evidence missing")
 	}
 	return nil
 }
