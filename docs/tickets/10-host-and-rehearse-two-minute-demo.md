@@ -4,12 +4,12 @@
 
 **Blocked by:** 04: Keep Incident Lab usable with a backup payout; 06: Label deterministic diagnosis when AI is unavailable; 09: Complete the Incident Lab and concise Overview.
 
-**Status:** complete
+**Status:** ready-for-human
 
 - [x] The hosted frontend, Go backend, and PostgreSQL run over HTTPS with PayPal and OpenAI secrets kept server-side.
 - [x] Two clean visitor sessions cannot inspect or change each other's payout records, incidents, approvals, or audit views.
-- [x] The one-new-payout-per-session rule, global daily limit, 25–30-second backup path, and deterministic diagnosis fallback work on the hosted site.
-- [x] Rehearsals of live and backup paths show the full incident, investigation, approval, and resolution journey in about two minutes.
+- [ ] The one-new-payout-per-session rule, global daily limit, 25–30-second backup path, and deterministic diagnosis fallback work on the hosted site.
+- [ ] Rehearsals of live and backup paths show the full incident, investigation, approval, and resolution journey in about two minutes.
 - [x] The demo has a restart and availability check suitable for keeping it accessible through the judging period.
 
 The public demo is at https://valkirie-shield.xyz/recoveryos/. The hosted
@@ -34,3 +34,7 @@ events separate. Public `/readyz` returned 204 before and after API restart.
 The live provider item reached `SUCCESS` within the wait window, so the
 30-second slow-item offer was verified in the client test and deployed build,
 while the hosted backup journey was exercised through the daily-limit route.
+The backup journey was rehearsed through a fresh HTTPS cookie jar, not a second
+browser profile. Those two hosted UI checks remain open. An OpenAI key must be
+added to the private server-side environment file before the AI mode can be
+rehearsed; the fallback mode is working and visibly labeled.
