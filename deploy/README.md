@@ -63,6 +63,9 @@ check only when the cap has already been reached. Each script starts with fresh
 HTTP cookies. The live check creates one genuine Sandbox payout, so run it
 deliberately; the backup and isolation checks only read pre-created provider
 evidence. The 22 October 2026 run and its limits are recorded in ticket 10.
+If a local Python installation lacks a CA bundle, point `SSL_CERT_FILE` at the
+system CA bundle before running these commands (on macOS, typically
+`/etc/ssl/cert.pem`). Keep certificate verification enabled.
 
 ## Diagnose AI investigations
 
