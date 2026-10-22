@@ -1,6 +1,7 @@
 services:
   db:
     image: postgres:17
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
       POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
@@ -29,6 +30,7 @@ services:
 
   api:
     image: recoveryos-api:local
+    restart: unless-stopped
     build:
       context: ./api
     env_file:
@@ -47,6 +49,7 @@ services:
       retries: 12
 
   client:
+    restart: unless-stopped
     build:
       context: ./client
     ports:
@@ -54,6 +57,7 @@ services:
 
   nginx:
     image: nginx:alpine
+    restart: unless-stopped
     ports:
       - "127.0.0.1:${NGINX_PORT:-8080}:80"
     volumes:

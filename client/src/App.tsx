@@ -29,8 +29,12 @@ function eventPresentation(event: Event) {
   return { label: 'RecoveryOS', className: '' }
 }
 
+function apiPath(path: string) {
+  return `${import.meta.env.BASE_URL}${path.replace(/^\//, '')}`
+}
+
 async function getSnapshot(path: string, method: 'GET' | 'POST' = 'GET', headers?: HeadersInit): Promise<Snapshot | null> {
-  const response = await fetch(path, { method, headers, credentials: 'same-origin', cache: 'no-store' })
+  const response = await fetch(apiPath(path), { method, headers, credentials: 'same-origin', cache: 'no-store' })
   if (response.status === 401) return null
   if (!response.ok) {
     const body = await response.json().catch(() => ({})) as { error?: string }
@@ -203,7 +207,7 @@ export function App() {
     setInvestigationError('')
     setApprovalError('')
     try {
-      const response = await fetch('/api/incidents/investigate', { method: 'POST', credentials: 'same-origin', cache: 'no-store' })
+      const response = await fetch(apiPath('/api/incidents/investigate'), { method: 'POST', credentials: 'same-origin', cache: 'no-store' })
       if (!response.ok) {
         const body = await response.json().catch(() => ({})) as { error?: string }
         throw new Error(body.error || `Investigation failed (${response.status})`)
@@ -226,7 +230,7 @@ export function App() {
     setApproving(true)
     setApprovalError('')
     try {
-      const response = await fetch('/api/incidents/approve', {
+      const response = await fetch(apiPath('/api/incidents/approve'), {
         method: 'POST', credentials: 'same-origin', cache: 'no-store',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ incident_id: snapshot.incident.id }),

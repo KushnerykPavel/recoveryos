@@ -1,0 +1,16 @@
+services:
+  client:
+    build:
+      args:
+        RECOVERYOS_BASE_PATH: /recoveryos/
+
+  nginx:
+    networks:
+      default:
+      proxy:
+        aliases:
+          - recoveryos-nginx
+
+networks:
+  proxy:
+    external: true
