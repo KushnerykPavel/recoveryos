@@ -6,7 +6,7 @@ import json
 import urllib.error
 import urllib.request
 
-ROOT = "https://valkirie-shield.xyz/recoveryos/"
+ROOT = "https://recoveryos.valkirie-shield.xyz/"
 
 
 def visitor():

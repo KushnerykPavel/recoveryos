@@ -12,7 +12,7 @@
 - [ ] Rehearsals of live and backup paths show the full incident, investigation, approval, and resolution journey in about two minutes.
 - [x] The demo has a restart and availability check suitable for keeping it accessible through the judging period.
 
-The public demo is at https://valkirie-shield.xyz/recoveryos/. The hosted
+The public demo is at https://recoveryos.valkirie-shield.xyz/. The hosted
 frontend, API, and PostgreSQL are managed by Compose behind the existing HTTPS
 proxy. Configuration and restart steps are in `deploy/README.md`. The API reads
 PayPal credentials from a private server-side environment file. No OpenAI key
@@ -38,3 +38,9 @@ The backup journey was rehearsed through a fresh HTTPS cookie jar, not a second
 browser profile. Those two hosted UI checks remain open. An OpenAI key must be
 added to the private server-side environment file before the AI mode can be
 rehearsed; the fallback mode is working and visibly labeled.
+
+On 22 October, the demo moved to the dedicated subdomain. A separate valid
+certificate covers `recoveryos.valkirie-shield.xyz`; the former apex path
+redirects there. The root page, asset, and `/readyz` checks passed, a clean
+browser started a session at the new address, the backup workflow resolved in
+3.0 seconds, and the two-visitor isolation check passed again.

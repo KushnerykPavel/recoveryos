@@ -2,7 +2,7 @@ services:
   client:
     build:
       args:
-        RECOVERYOS_BASE_PATH: /recoveryos/
+        RECOVERYOS_BASE_PATH: /
 
   nginx:
     networks:

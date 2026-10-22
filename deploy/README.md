@@ -1,7 +1,7 @@
 # Hosted demo on my-vps
 
-The public URL is `https://valkirie-shield.xyz/recoveryos/`. The existing
-shared HTTPS proxy handles TLS and forwards only this path to the RecoveryOS
+The public URL is `https://recoveryos.valkirie-shield.xyz/`. The existing
+shared HTTPS proxy handles TLS and forwards this hostname to the RecoveryOS
 Compose stack. PostgreSQL, the Go API, and the static client remain inside
 Docker. PayPal and OpenAI credentials are read only by the Go API and migration
 containers from `api/.env`; never place them in client build arguments.
@@ -19,13 +19,18 @@ containers from `api/.env`; never place them in client build arguments.
    Compose applies migrations before starting the API. It also gives the
    internal Nginx service the `recoveryos-nginx` name on the existing `proxy`
    Docker network.
-3. Add the two locations from `deploy/recoveryos.location.conf` inside the
-   `valkirie-shield.xyz` HTTPS server in
-   `/opt/vps-nginx/nginx/conf.d/valkirie-shield.xyz.conf`. Check with
+3. Point the subdomain's A record at the VPS and issue a dedicated Let's
+   Encrypt certificate with the shared proxy's certbot service. Copy
+   `deploy/recoveryos.vhost.conf` to
+   `/opt/vps-nginx/nginx/conf.d/recoveryos.valkirie-shield.xyz.conf`.
+   Keep the legacy redirect locations from `deploy/recoveryos.location.conf`
+   inside the apex `valkirie-shield.xyz` HTTPS server. Check with
    `sudo docker exec nginx-proxy nginx -t`, then reload with
    `sudo docker exec nginx-proxy nginx -s reload`.
-4. Check `https://valkirie-shield.xyz/recoveryos/` and
-   `https://valkirie-shield.xyz/recoveryos/readyz`. A ready API returns 204.
+4. Check `https://recoveryos.valkirie-shield.xyz/` and
+   `https://recoveryos.valkirie-shield.xyz/readyz`. A ready API returns 204.
+   The former `https://valkirie-shield.xyz/recoveryos/` route redirects to the
+   dedicated hostname.
 
 The application services use `restart: unless-stopped`; the database has a
 persistent named volume. To restart after maintenance, run the same Compose

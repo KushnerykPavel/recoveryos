@@ -12,7 +12,7 @@ import urllib.request
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=("live", "backup"))
-    parser.add_argument("--base-url", default="https://valkirie-shield.xyz/recoveryos/")
+    parser.add_argument("--base-url", default="https://recoveryos.valkirie-shield.xyz/")
     parser.add_argument("--expect-daily-limit", action="store_true")
     parser.add_argument("--other-session-id")
     args = parser.parse_args()
