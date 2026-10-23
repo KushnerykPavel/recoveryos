@@ -4,12 +4,12 @@
 
 **Blocked by:** 10: Host and rehearse the two-minute demo.
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
-- [ ] A valid signed webhook is accepted and linked to the corresponding payout evidence.
-- [ ] An invalid signature or unrecognized payout reference is rejected without changing a payout record.
+- [x] A valid signed webhook is accepted and linked to the corresponding payout evidence.
+- [x] An invalid signature or unrecognized payout reference is rejected without changing a payout record.
 - [ ] Incident Lab distinguishes a genuine webhook from an injected internal fault.
-- [ ] Webhook work begins only if P0, documentation, and submission readiness retain sufficient time before the deadline.
+- [x] The user explicitly prioritized the backend webhook work while hosted P0 and submission items remain open.
 
 Backend implementation is deployed: the optional endpoint verifies signed
 item-success events through PayPal's Sandbox verification API, matches only
@@ -24,5 +24,6 @@ produced item `NZ8CX9HMLQQGG` and PayPal event
 event type and item ID. The database contained one `paypal_webhook` event for
 the live payout, with the payout record still `pending` and its incident still
 `open`. PayPal accepted a resend of that same event, after which the stored
-event count remained one. The PostgreSQL integration test still needs a
-disposable `TEST_DB_URL` to run locally.
+event count remained one. The PostgreSQL integration test passed against an
+isolated temporary database on the VPS; it also confirmed that the live
+snapshot includes the event and the backup session does not.
