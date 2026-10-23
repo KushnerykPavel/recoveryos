@@ -77,6 +77,26 @@ Use `COOKIE_SECURE=true` when serving through HTTPS. The API only targets
 `https://api-m.sandbox.paypal.com`; it does not accept a production PayPal
 base URL from the environment.
 
+## Signed PayPal payout webhook
+
+The optional `POST /api/webhooks/paypal` endpoint records a genuine
+`PAYMENT.PAYOUTS-ITEM.SUCCEEDED` notification as immutable evidence for its
+matching **live** payout. It does not reconcile, change the payout record, or
+replace the fresh PayPal read required at approval. Backup sessions do not
+receive an earlier payout's webhook. Duplicate PayPal event IDs are accepted
+without appending another event.
+
+Register `https://recoveryos.valkirie-shield.xyz/api/webhooks/paypal` as a
+Sandbox webhook on the **same PayPal REST app** used for payout creation.
+Subscribe to `PAYMENT.PAYOUTS-ITEM.SUCCEEDED` and set its Webhook ID as
+`PAYPAL_WEBHOOK_ID` in the server-side `api/.env`. Restart the API. Leaving the
+ID empty disables the route. The endpoint needs no visitor cookie; it verifies
+PayPal's transmission headers and event through the Sandbox
+`verify-webhook-signature` API before processing the item ID. Invalid
+signatures and unknown items do not create events. A verification outage
+returns HTTP 503 so PayPal can retry. Do not use the PayPal simulator to test
+this verification method: its mock events cannot be verified by that API.
+
 ## HTTP flow
 
 ```sh

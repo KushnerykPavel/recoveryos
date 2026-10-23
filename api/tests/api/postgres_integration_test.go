@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -82,6 +83,63 @@ func TestPostgresConcurrentApprovalsCommitOneCorrection(t *testing.T) {
 	if successes != 1 || corrections != 1 || approvals != 1 || verifications != 1 ||
 		after.Payout.Status != "corrected" || after.Incident.Status != "resolved" || provider.createCalls != 0 {
 		t.Fatalf("successes=%d audit=%d/%d/%d snapshot=%+v creates=%d", successes, corrections, approvals, verifications, after, provider.createCalls)
+	}
+}
+
+func TestPostgresWebhookEvidenceIsUniqueAndDoesNotChangePayout(t *testing.T) {
+	db := postgresTestPool(t)
+	store := postgres.New(db, 1)
+	live, err := store.CreateSession(t.Context(), []byte("live-webhook-test"), time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payoutID string
+	err = db.QueryRow(t.Context(), `INSERT INTO payout_records
+		(session_id, creation_key, sender_item_id, batch_id, item_id, provider_status, status, scenario, origin)
+		VALUES ($1, 'live-key', 'sender-1', 'batch-1', 'ITEM-1', 'SUCCESS', 'pending', 'missed-update', 'live')
+		RETURNING id::text`, live.ID).Scan(&payoutID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backup, err := store.CreateBackupSession(t.Context(), []byte("backup-webhook-test"), time.Now().Add(time.Hour), recoveryuc.BackupEvidence{
+		CreationKey: "backup-key", SenderItemID: "sender-1", BatchID: "batch-1", ItemID: "ITEM-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	matched, err := store.SavePayPalWebhook(t.Context(), "WH-unknown", "UNKNOWN")
+	if err != nil || matched {
+		t.Fatalf("unknown item matched=%t err=%v", matched, err)
+	}
+	for range 2 {
+		matched, err = store.SavePayPalWebhook(t.Context(), "WH-1", "ITEM-1")
+		if err != nil || !matched {
+			t.Fatalf("known item matched=%t err=%v", matched, err)
+		}
+	}
+	var eventCount, backupEventCount int
+	var payoutStatus string
+	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM payout_events
+		WHERE payout_id = $1 AND source = 'paypal_webhook' AND paypal_event_id = 'WH-1'`, payoutID).Scan(&eventCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM payout_events
+		WHERE session_id = $1 AND source = 'paypal_webhook'`, backup.ID).Scan(&backupEventCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(t.Context(), `SELECT status FROM payout_records WHERE id = $1`, payoutID).Scan(&payoutStatus); err != nil {
+		t.Fatal(err)
+	}
+	if eventCount != 1 || backupEventCount != 0 || payoutStatus != "pending" {
+		t.Fatalf("live events=%d backup events=%d payout status=%q", eventCount, backupEventCount, payoutStatus)
+	}
+	snapshot, err := store.Snapshot(t.Context(), []byte("live-webhook-test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Events) != 1 || snapshot.Events[0].Source != "paypal_webhook" ||
+		snapshot.Payout.Status != "pending" {
+		t.Fatalf("webhook missing from live snapshot or payout changed: %+v", snapshot)
 	}
 }
 

@@ -33,6 +33,15 @@ type Client struct {
 	tokenExpiry time.Time
 }
 
+type WebhookDelivery struct {
+	TransmissionID   string
+	TransmissionTime string
+	CertURL          string
+	AuthAlgo         string
+	TransmissionSig  string
+	Event            json.RawMessage
+}
+
 type payoutAmount struct {
 	Value    string `json:"value"`
 	Currency string `json:"currency"`
@@ -115,6 +124,37 @@ func (c *Client) GetBatchItem(ctx context.Context, batchID string) (recoveryuc.I
 	}
 	item := response.Items[0]
 	return recoveryuc.Item{ID: item.ID, BatchID: batchID, SenderItemID: item.PayoutItem.SenderItemID, Status: item.Status}, nil
+}
+
+func (c *Client) VerifyWebhook(ctx context.Context, webhookID string, delivery WebhookDelivery) (bool, error) {
+	request := struct {
+		TransmissionID   string          `json:"transmission_id"`
+		TransmissionTime string          `json:"transmission_time"`
+		CertURL          string          `json:"cert_url"`
+		AuthAlgo         string          `json:"auth_algo"`
+		TransmissionSig  string          `json:"transmission_sig"`
+		WebhookID        string          `json:"webhook_id"`
+		WebhookEvent     json.RawMessage `json:"webhook_event"`
+	}{
+		TransmissionID: delivery.TransmissionID, TransmissionTime: delivery.TransmissionTime,
+		CertURL: delivery.CertURL, AuthAlgo: delivery.AuthAlgo,
+		TransmissionSig: delivery.TransmissionSig, WebhookID: webhookID,
+		WebhookEvent: delivery.Event,
+	}
+	var response struct {
+		Status string `json:"verification_status"`
+	}
+	if err := c.call(ctx, http.MethodPost, "/v1/notifications/verify-webhook-signature", request, &response); err != nil {
+		return false, err
+	}
+	switch response.Status {
+	case "SUCCESS":
+		return true, nil
+	case "FAILURE":
+		return false, nil
+	default:
+		return false, fmt.Errorf("unexpected PayPal webhook verification status %q", response.Status)
+	}
 }
 
 func (c *Client) call(ctx context.Context, method, path string, body any, dst any) error {

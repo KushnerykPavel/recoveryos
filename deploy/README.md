@@ -67,6 +67,16 @@ If a local Python installation lacks a CA bundle, point `SSL_CERT_FILE` at the
 system CA bundle before running these commands (on macOS, typically
 `/etc/ssl/cert.pem`). Keep certificate verification enabled.
 
+For the optional signed payout webhook, register
+`https://recoveryos.valkirie-shield.xyz/api/webhooks/paypal` on the same
+Sandbox REST app used by this API, subscribe to
+`PAYMENT.PAYOUTS-ITEM.SUCCEEDED`, and put the issued `PAYPAL_WEBHOOK_ID` in the
+private `api/.env` on the VPS. Restart the API container. The existing HTTPS
+proxy forwards `/api/` to Go; no new proxy route is needed. Confirm delivery
+using a genuine Sandbox payout and check that its live session's event history
+contains one `paypal_webhook` event. The webhook does not alter payout status
+or approve a correction.
+
 ## Diagnose AI investigations
 
 Follow the API logs while clicking **Run investigation** or **Run investigation

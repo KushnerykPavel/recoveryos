@@ -21,18 +21,20 @@ type Config struct {
 	PollInterval     time.Duration
 	WaitTimeout      time.Duration
 	PayPal           paypal.Config
+	PayPalWebhookID  string
 	OpenAIKey        string
 	OpenAIModel      string
 }
 
 func LoadConfig() (Config, error) {
 	config := Config{
-		Address:      envDefault("ADDRESS", "127.0.0.1:8080"),
-		DatabaseURL:  os.Getenv("DB_URL"),
-		PollInterval: time.Second,
-		WaitTimeout:  25 * time.Second,
-		OpenAIKey:    os.Getenv("OPENAI_API_KEY"),
-		OpenAIModel:  envDefault("OPENAI_MODEL", "gpt-6-luna"),
+		Address:         envDefault("ADDRESS", "127.0.0.1:8080"),
+		DatabaseURL:     os.Getenv("DB_URL"),
+		PollInterval:    time.Second,
+		WaitTimeout:     25 * time.Second,
+		OpenAIKey:       os.Getenv("OPENAI_API_KEY"),
+		OpenAIModel:     envDefault("OPENAI_MODEL", "gpt-6-luna"),
+		PayPalWebhookID: os.Getenv("PAYPAL_WEBHOOK_ID"),
 		BackupPayout: recoveryuc.BackupEvidence{
 			CreationKey:  envDefault("BACKUP_PAYOUT_CREATION_KEY", "recoveryos-smoke-fac4d1e716ad506a5435ee0c6efabad5"),
 			SenderItemID: envDefault("BACKUP_PAYOUT_SENDER_ITEM_ID", "smoke-fac4d1e716ad506a5435ee0c6efabad5"),

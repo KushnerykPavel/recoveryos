@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	recoveryhandler "github.com/KushnerykPavel/recoveryos/api/internal/handlers/recovery"
+	webhookhandler "github.com/KushnerykPavel/recoveryos/api/internal/handlers/webhook"
 	"github.com/KushnerykPavel/recoveryos/api/internal/repo/postgres"
 	"github.com/KushnerykPavel/recoveryos/api/internal/service/openai"
 	"github.com/KushnerykPavel/recoveryos/api/internal/service/paypal"
@@ -33,9 +34,13 @@ func Run(ctx context.Context, config Config, logger *slog.Logger) error {
 	service := recoveryuc.NewService(store, provider, config.PollInterval, config.WaitTimeout).WithBackup(config.BackupPayout)
 	investigator := investigation.New(service, provider, openai.New(config.OpenAIKey, config.OpenAIModel, nil), store).WithLogger(logger)
 	handler := recoveryhandler.New(service, config.CookieSecure, logger).WithInvestigator(investigator)
+	var webhooks *webhookhandler.Handler
+	if config.PayPalWebhookID != "" {
+		webhooks = webhookhandler.New(config.PayPalWebhookID, provider, store, logger)
+	}
 	server := &http.Server{
 		Addr:              config.Address,
-		Handler:           buildRouter(handler, store, logger),
+		Handler:           buildRouter(handler, webhooks, store, logger),
 		ReadHeaderTimeout: 5 * time.Second,
 		WriteTimeout:      90 * time.Second,
 	}
