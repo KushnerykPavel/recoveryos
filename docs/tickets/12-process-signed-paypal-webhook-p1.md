@@ -27,3 +27,8 @@ the live payout, with the payout record still `pending` and its incident still
 event count remained one. The PostgreSQL integration test passed against an
 isolated temporary database on the VPS; it also confirmed that the live
 snapshot includes the event and the backup session does not.
+
+A second authorized genuine Sandbox payout produced item `2DLDEKEGCQGMW`.
+The public `GET /api/sessions/current` response for its live session showed
+exactly one `paypal_webhook` event, including on a repeat read ten seconds
+later. The payout record remained `pending` and the incident remained `open`.
