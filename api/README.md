@@ -120,9 +120,9 @@ before opening a backup session. Use a payout from the Sandbox account whose
 credentials the API is running with.
 
 `POST /api/incidents/approve` rechecks the exact PayPal payout item and
-records rejected correction attempts in the session event history. A verified
-proposal does not yet change the payout record. Atomic record correction
-belongs to a later roadmap stage.
+records rejected correction attempts in the session event history. An approved
+correction changes only the operational payout record; that change and its
+audit event commit atomically. A repeated approval cannot correct twice.
 
 ## Verification
 
